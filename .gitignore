@@ -1,0 +1,5 @@
+.venv/
+.venv-*/
+__pycache__/
+# pesos y enlaces a los blobs de Ollama (se regeneran con qwen_ollama.py y fetch_mtp.py)
+.ollama_qwen/

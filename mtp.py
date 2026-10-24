@@ -1,0 +1,269 @@
+"""Decodificación especulativa con la cabeza MTP nativa de Qwen3.5 (greedy), sobre mlx-lm 0.31.3.
+
+Cada ciclo: la cabeza MTP propone 1 token (d); el modelo verifica [t, d] en UNA pasada (los pesos
+se leen una vez para los 2 tokens). Si acierta salen 2 tokens (d + el siguiente del modelo); si
+falla sale 1 y se deshace el estado: las capas de atención recortan 1 posición de la KV cache y las
+GatedDeltaNet recuperan el estado (conv + recurrente) guardado tras el primer token.
+La salida es la misma que el greedy normal (salvo empates numéricos).
+
+Uso: python mtp.py [--lm-head 8] [--mtp-quant nvfp4|8|none] [--max-tokens 256]
+"""
+import argparse
+import time
+from pathlib import Path
+
+import mlx.core as mx
+import mlx.nn as nn
+from mlx_lm import stream_generate
+from mlx_lm.models import qwen3_5
+from mlx_lm.models.base import create_attention_mask, create_ssm_mask
+from mlx_lm.models.cache import ArraysCache, KVCache
+from mlx_lm.models.gated_delta import compute_g, gated_delta_update
+
+import qwen_ollama
+from gdn_kernel import gated_delta_snapshot
+
+MTP_PATH = Path(__file__).parent / ".ollama_qwen" / "mtp.safetensors"
+
+
+class MTPLayer(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.self_attn = qwen3_5.Attention(args)
+        self.input_layernorm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+        self.post_attention_layernorm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+        self.mlp = qwen3_5.MLP(args.hidden_size, args.intermediate_size)
+
+    def __call__(self, x, mask, cache):
+        h = x + self.self_attn(self.input_layernorm(x), mask, cache)
+        return h + self.mlp(self.post_attention_layernorm(h))
+
+
+class MTP(nn.Module):
+    """Predice el token t+2 a partir del hidden (pre-norm) en t y el embedding del token t+1."""
+
+    def __init__(self, args):
+        super().__init__()
+        H = args.hidden_size
+        self.pre_fc_norm_hidden = nn.RMSNorm(H, eps=args.rms_norm_eps)
+        self.pre_fc_norm_embedding = nn.RMSNorm(H, eps=args.rms_norm_eps)
+        self.fc = nn.Linear(2 * H, H, bias=False)
+        self.layers = [MTPLayer(args)]
+        self.norm = nn.RMSNorm(H, eps=args.rms_norm_eps)
+
+
+def load_mtp(lm, quant=None):
+    mtp = MTP(lm.args)
+    # Pesos crudos de HF: las RMSNorm de Qwen3.5 guardan (w - 1)
+    w = {k.removeprefix("mtp."): (v + 1.0 if v.ndim == 1 else v)
+         for k, v in mx.load(str(MTP_PATH)).items()}
+    mtp.load_weights(list(w.items()), strict=True)
+    if quant:
+        nn.quantize(mtp, **quant)
+    mx.eval(mtp.parameters())
+    return mtp
+
+
+def _gdn_call(self, inputs, mask=None, cache=None):
+    """GatedDeltaNet.__call__ de mlx-lm 0.31.3 + cache.split: guarda el estado tras `split` tokens."""
+    B, S, _ = inputs.shape
+    split = getattr(cache, "split", 0) if cache is not None else 0
+    split = split if 0 < split < S else 0
+
+    qkv = self.in_proj_qkv(inputs)
+    z = self.in_proj_z(inputs).reshape(B, S, self.num_v_heads, self.head_v_dim)
+    b = self.in_proj_b(inputs)
+    a = self.in_proj_a(inputs)
+
+    if cache is not None and cache[0] is not None:
+        conv_state = cache[0]
+    else:
+        conv_state = mx.zeros((B, self.conv_kernel_size - 1, self.conv_dim), dtype=inputs.dtype)
+
+    if mask is not None:
+        qkv = mx.where(mask[..., None], qkv, 0)
+    conv_input = mx.concatenate([conv_state, qkv], axis=1)
+    n_keep = self.conv_kernel_size - 1
+    if cache is not None:
+        if cache.lengths is not None:
+            ends = mx.clip(cache.lengths, 0, S)
+            positions = (ends[:, None] + mx.arange(n_keep))[..., None]
+            cache[0] = mx.take_along_axis(conv_input, positions, axis=1)
+        else:
+            cache[0] = mx.contiguous(conv_input[:, -n_keep:, :])
+    conv_out = nn.silu(self.conv1d(conv_input))
+
+    q, k, v = [
+        t.reshape(B, S, h, d)
+        for t, h, d in zip(
+            mx.split(conv_out, [self.key_dim, 2 * self.key_dim], -1),
+            [self.num_k_heads, self.num_k_heads, self.num_v_heads],
+            [self.head_k_dim, self.head_k_dim, self.head_v_dim],
+        )
+    ]
+    state = cache[1] if cache else None
+    inv_scale = k.shape[-1] ** -0.5
+    q = (inv_scale**2) * mx.fast.rms_norm(q, None, 1e-6)
+    k = inv_scale * mx.fast.rms_norm(k, None, 1e-6)
+
+    if split:
+        if state is None:
+            state = mx.zeros((B, self.num_v_heads, self.head_v_dim, self.head_k_dim), dtype=mx.float32)
+        g = compute_g(self.A_log, a, self.dt_bias)
+        out, state, mids = gated_delta_snapshot(q, k, v, g, mx.sigmoid(b), state)
+        cache.rollback = (mx.contiguous(conv_input[:, split:split + n_keep, :]), mids[split - 1])
+    else:
+        out, state = gated_delta_update(q, k, v, a, b, self.A_log, self.dt_bias, state, mask,
+                                        use_kernel=not self.training)
+
+    if cache is not None:
+        cache[1] = state
+        cache.advance(S)
+
+    out = self.norm(out, z)
+    return self.out_proj(out.reshape(B, S, -1))
+
+
+qwen3_5.GatedDeltaNet.__call__ = _gdn_call
+
+
+def backbone(lm, tokens, cache):
+    """Como TextModel.__call__ pero devuelve también el hidden pre-norm (entrada de la MTP)."""
+    m = lm.model
+    h = m.embed_tokens(tokens)
+    fa_mask = create_attention_mask(h, cache[m.fa_idx])
+    ssm_mask = create_ssm_mask(h, cache[m.ssm_idx])
+    for layer, c in zip(m.layers, cache):
+        h = layer(h, mask=ssm_mask if layer.is_linear else fa_mask, cache=c)
+    return lm.lm_head(m.norm(h)), h
+
+
+def load_draft_head(vocab, quant):
+    """lm_head barato solo para proponer: los `vocab` primeros ids (BPE ~ ordenado por frecuencia)
+    y menos bits. No cambia la salida (la verifica el lm_head completo), solo la aceptación."""
+    jsons, tensors = qwen_ollama._manifest("9b-mlx")
+    for path in tensors:
+        w = mx.load(str(path), format="safetensors")
+        if "language_model.lm_head.weight" in w:
+            W = w["language_model.lm_head.weight"][:vocab]
+            break
+    head = nn.Linear(W.shape[1], W.shape[0], bias=False)
+    head.weight = mx.contiguous(W)
+    del w, W
+    if quant:  # nn.quantize no sustituye el módulo raíz
+        head = nn.QuantizedLinear.from_linear(head, **quant)
+    mx.eval(head.parameters())
+    return head
+
+
+def mtp_logits(lm, mtp, hidden, tokens, mcache, head=None):
+    e = mtp.pre_fc_norm_embedding(lm.model.embed_tokens(tokens))
+    x = mtp.fc(mx.concatenate([e, mtp.pre_fc_norm_hidden(hidden)], axis=-1))
+    mask = create_attention_mask(x, mcache[0])
+    for layer, c in zip(mtp.layers, mcache):
+        x = layer(x, mask, c)
+    return (head or lm.lm_head)(mtp.norm(x[:, -1:]))
+
+
+def generate_mtp(lm, mtp, prompt_ids, max_tokens, eos, head=None):
+    cache = lm.make_cache()
+    mcache = [KVCache() for _ in mtp.layers]
+    lin = [c for c in cache if isinstance(c, ArraysCache)]
+    kv = [c for c in cache if isinstance(c, KVCache)]
+
+    p = mx.array(prompt_ids)[None]
+    logits, H = backbone(lm, p, cache)
+    t = mx.argmax(logits[:, -1:], axis=-1)
+    # la MTP ve los pares (H[i], token[i+1]) de todo el prompt y propone el primer borrador
+    d = mx.argmax(mtp_logits(lm, mtp, H, mx.concatenate([p[:, 1:], t], axis=1), mcache, head), axis=-1)
+    mx.eval(t, d)
+    t0 = time.perf_counter()
+    out = [t.item()]
+    drafted = accepted = 0
+    while len(out) < max_tokens and out[-1] not in eos:
+        for c in lin:
+            c.split = 1
+        logits, Hv = backbone(lm, mx.concatenate([t, d], axis=1), cache)
+        for c in lin:
+            c.split = 0
+        a = mx.argmax(logits, axis=-1)
+        mx.eval(a)
+        a0, a1, dv = a[0, 0].item(), a[0, 1].item(), d.item()
+        drafted += 1
+        if a0 == dv:
+            accepted += 1
+            out += [a0, a1]
+            t = a[:, 1:]
+            toks = a  # pares (H[t], d) y (H[d], a1); a[:, 0] == d
+            d = mx.argmax(mtp_logits(lm, mtp, Hv, toks, mcache, head), axis=-1)
+        else:
+            for c in lin:
+                c[0], c[1] = c.rollback
+            for c in kv:
+                c.trim(1)
+            out.append(a0)
+            t = a[:, :1]
+            d = mx.argmax(mtp_logits(lm, mtp, Hv[:, :1], t, mcache, head), axis=-1)
+    dt = time.perf_counter() - t0
+    for i, tok in enumerate(out):
+        if tok in eos:
+            out = out[: i + 1]
+            break
+    out = out[:max_tokens]
+    return out, (len(out) - 1) / dt, accepted / max(drafted, 1)
+
+
+PROMPTS = [
+    "Explica en detalle cómo funciona un motor de combustión interna de cuatro tiempos.",
+    "Escribe una función en Python que valide un NIF español y explica cada paso.",
+    "Resume las causas principales de la Revolución Francesa en una lista numerada.",
+    "Write a short story about a lighthouse keeper who finds a message in a bottle.",
+]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--lm-head", default="8", help="none | 8 | 6 | 4 (bits del lm_head)")
+    ap.add_argument("--mtp-quant", default="nvfp4", help="none | nvfp4 | 8 | 4")
+    ap.add_argument("--draft-vocab", type=int, default=0, help="0 = usar el lm_head principal")
+    ap.add_argument("--draft-bits", default="4")
+    ap.add_argument("--max-tokens", type=int, default=256)
+    ap.add_argument("--no-baseline", action="store_true")
+    args = ap.parse_args()
+
+    bits = lambda s: None if s == "none" else (
+        {"bits": 4, "group_size": 16, "mode": "nvfp4"} if s == "nvfp4" else {"bits": int(s), "group_size": 64})
+    model, tok = qwen_ollama.load(lm_head_quant=bits(args.lm_head))
+    lm = model.language_model
+    mtp = load_mtp(lm, bits(args.mtp_quant))
+    eos = set(tok.eos_token_ids)
+    head = load_draft_head(args.draft_vocab, bits(args.draft_bits)) if args.draft_vocab else None
+    print(f"lm_head={args.lm_head} mtp={args.mtp_quant} draft={args.draft_vocab}/{args.draft_bits}b mem {mx.get_active_memory()/1e9:.2f} GB")
+
+    tot_base = tot_mtp = 0.0
+    for prompt in PROMPTS:
+        ids = tok.apply_chat_template([{"role": "user", "content": prompt}],
+                                      add_generation_prompt=True, enable_thinking=False)
+        if not args.no_baseline:
+            ref, last = [], None
+            for r in stream_generate(model, tok, ids, max_tokens=args.max_tokens):
+                ref.append(r.token)
+                last = r
+            base_tps = last.generation_tps
+        out, tps, acc = generate_mtp(lm, mtp, ids, args.max_tokens, eos, head)
+        if args.no_baseline:
+            print(f"  mtp {tps:5.1f} tok/s  acept {acc*100:4.1f}%  ({len(out)} tok)  {prompt[:40]}")
+            continue
+        same = next((i for i, (x, y) in enumerate(zip(out, ref)) if x != y), min(len(out), len(ref)))
+        tot_base += base_tps
+        tot_mtp += tps
+        print(f"  base {base_tps:5.1f} tok/s | mtp {tps:5.1f} tok/s ({tps/base_tps:.2f}x)  "
+              f"acept {acc*100:4.1f}%  idénticos {same}/{len(ref)}  {prompt[:40]}")
+    if not args.no_baseline:
+        print(f"media: base {tot_base/len(PROMPTS):.1f} tok/s -> mtp {tot_mtp/len(PROMPTS):.1f} tok/s "
+              f"({tot_mtp/tot_base:.2f}x)")
+    print(tok.decode(out)[:300].replace("\n", " "))
+
+
+if __name__ == "__main__":
+    main()
