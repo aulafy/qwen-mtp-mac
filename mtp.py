@@ -65,10 +65,10 @@ def load_mtp(lm, quant=None):
 
 
 def _gdn_call(self, inputs, mask=None, cache=None):
-    """GatedDeltaNet.__call__ de mlx-lm 0.31.3 + cache.split: guarda el estado tras `split` tokens."""
+    """GatedDeltaNet.__call__ de mlx-lm 0.31.3 + cache.snap: guarda el estado tras cada token
+    para poder volver a cualquier prefijo (restore)."""
     B, S, _ = inputs.shape
-    split = getattr(cache, "split", 0) if cache is not None else 0
-    split = split if 0 < split < S else 0
+    snap = cache is not None and getattr(cache, "snap", False) and S > 1
 
     qkv = self.in_proj_qkv(inputs)
     z = self.in_proj_z(inputs).reshape(B, S, self.num_v_heads, self.head_v_dim)
@@ -106,12 +106,12 @@ def _gdn_call(self, inputs, mask=None, cache=None):
     q = (inv_scale**2) * mx.fast.rms_norm(q, None, 1e-6)
     k = inv_scale * mx.fast.rms_norm(k, None, 1e-6)
 
-    if split:
+    if snap:
         if state is None:
             state = mx.zeros((B, self.num_v_heads, self.head_v_dim, self.head_k_dim), dtype=mx.float32)
         g = compute_g(self.A_log, a, self.dt_bias)
         out, state, mids = gated_delta_snapshot(q, k, v, g, mx.sigmoid(b), state)
-        cache.rollback = (mx.contiguous(conv_input[:, split:split + n_keep, :]), mids[split - 1])
+        cache.rollback = (conv_input, mids, n_keep)
     else:
         out, state = gated_delta_update(q, k, v, a, b, self.A_log, self.dt_bias, state, mask,
                                         use_kernel=not self.training)
@@ -127,15 +127,23 @@ def _gdn_call(self, inputs, mask=None, cache=None):
 qwen3_5.GatedDeltaNet.__call__ = _gdn_call
 
 
+def restore(cache, keep):
+    """Deja una GatedDeltaNet como si solo hubiera procesado los `keep` primeros tokens del último paso."""
+    conv_input, mids, n_keep = cache.rollback
+    cache[0] = mx.contiguous(conv_input[:, keep:keep + n_keep, :])
+    cache[1] = mids[keep - 1]
+
+
 def backbone(lm, tokens, cache):
-    """Como TextModel.__call__ pero devuelve también el hidden pre-norm (entrada de la MTP)."""
+    """Como TextModel.__call__ pero devuelve también el hidden pre-norm y post-norm (entrada de la MTP)."""
     m = lm.model
     h = m.embed_tokens(tokens)
     fa_mask = create_attention_mask(h, cache[m.fa_idx])
     ssm_mask = create_ssm_mask(h, cache[m.ssm_idx])
     for layer, c in zip(m.layers, cache):
         h = layer(h, mask=ssm_mask if layer.is_linear else fa_mask, cache=c)
-    return lm.lm_head(m.norm(h)), h
+    hn = m.norm(h)
+    return lm.lm_head(hn), h, hn
 
 
 def load_draft_head(vocab, quant):
@@ -156,61 +164,81 @@ def load_draft_head(vocab, quant):
     return head
 
 
-def mtp_logits(lm, mtp, hidden, tokens, mcache, head=None):
+def mtp_step(lm, mtp, hidden, tokens, mcache, head=None):
+    """Una pasada de la MTP sobre pares (hidden[i], tokens[i]); devuelve logits del último y su
+    hidden pre-norm y post-norm (para encadenar el siguiente borrador)."""
     e = mtp.pre_fc_norm_embedding(lm.model.embed_tokens(tokens))
     x = mtp.fc(mx.concatenate([e, mtp.pre_fc_norm_hidden(hidden)], axis=-1))
     mask = create_attention_mask(x, mcache[0])
     for layer, c in zip(mtp.layers, mcache):
         x = layer(x, mask, c)
-    return (head or lm.lm_head)(mtp.norm(x[:, -1:]))
+    x = x[:, -1:]
+    xn = mtp.norm(x)
+    return (head or lm.lm_head)(xn), x, xn
 
 
-def generate_mtp(lm, mtp, prompt_ids, max_tokens, eos, head=None):
+def draft_chain(lm, mtp, hidden, tokens, mcache, k, head=None, chain="pre"):
+    """k borradores: el primero con los pares reales, los siguientes reutilizando el hidden de la propia MTP.
+    Deja k-1 entradas especulativas en mcache (se recortan en el ciclo siguiente)."""
+    logits, x, xn = mtp_step(lm, mtp, hidden, tokens, mcache, head)
+    drafts = [mx.argmax(logits, axis=-1)]
+    for _ in range(k - 1):
+        logits, x, xn = mtp_step(lm, mtp, x if chain == "pre" else xn, drafts[-1], mcache, head)
+        drafts.append(mx.argmax(logits, axis=-1))
+    return mx.concatenate(drafts, axis=1)
+
+
+def generate_mtp(lm, mtp, prompt_ids, max_tokens, eos, head=None, k=1, bb_hidden="pre", chain="pre"):
     cache = lm.make_cache()
     mcache = [KVCache() for _ in mtp.layers]
     lin = [c for c in cache if isinstance(c, ArraysCache)]
     kv = [c for c in cache if isinstance(c, KVCache)]
+    pick = (lambda h, hn: h) if bb_hidden == "pre" else (lambda h, hn: hn)
 
     p = mx.array(prompt_ids)[None]
-    logits, H = backbone(lm, p, cache)
+    logits, h, hn = backbone(lm, p, cache)
     t = mx.argmax(logits[:, -1:], axis=-1)
-    # la MTP ve los pares (H[i], token[i+1]) de todo el prompt y propone el primer borrador
-    d = mx.argmax(mtp_logits(lm, mtp, H, mx.concatenate([p[:, 1:], t], axis=1), mcache, head), axis=-1)
-    mx.eval(t, d)
+    # la MTP ve los pares (H[i], token[i+1]) de todo el prompt y propone los primeros borradores
+    drafts = draft_chain(lm, mtp, pick(h, hn), mx.concatenate([p[:, 1:], t], axis=1), mcache, k, head, chain)
+    mx.eval(t, drafts)
     t0 = time.perf_counter()
     out = [t.item()]
-    drafted = accepted = 0
+    cycles = 0
+    acc_pos = [0] * k  # aciertos por posición del borrador
     while len(out) < max_tokens and out[-1] not in eos:
         for c in lin:
-            c.split = 1
-        logits, Hv = backbone(lm, mx.concatenate([t, d], axis=1), cache)
+            c.snap = True
+        logits, h, hn = backbone(lm, mx.concatenate([t, drafts], axis=1), cache)
         for c in lin:
-            c.split = 0
-        a = mx.argmax(logits, axis=-1)
+            c.snap = False
+        a = mx.argmax(logits, axis=-1)  # [1, k+1]: predicción tras t, d1, ..., dk
         mx.eval(a)
-        a0, a1, dv = a[0, 0].item(), a[0, 1].item(), d.item()
-        drafted += 1
-        if a0 == dv:
-            accepted += 1
-            out += [a0, a1]
-            t = a[:, 1:]
-            toks = a  # pares (H[t], d) y (H[d], a1); a[:, 0] == d
-            d = mx.argmax(mtp_logits(lm, mtp, Hv, toks, mcache, head), axis=-1)
-        else:
+        av, dv = a[0].tolist(), drafts[0].tolist()
+        n_acc = 0
+        while n_acc < k and av[n_acc] == dv[n_acc]:
+            acc_pos[n_acc] += 1
+            n_acc += 1
+        cycles += 1
+        keep = n_acc + 1  # t y los borradores aceptados
+        out += av[:keep]  # borradores aceptados (== av) + el token corregido/extra del modelo
+        if keep < k + 1:
             for c in lin:
-                c[0], c[1] = c.rollback
+                restore(c, keep)
             for c in kv:
-                c.trim(1)
-            out.append(a0)
-            t = a[:, :1]
-            d = mx.argmax(mtp_logits(lm, mtp, Hv[:, :1], t, mcache, head), axis=-1)
+                c.trim(k + 1 - keep)
+        for c in mcache:
+            c.trim(k - 1)
+        t = a[:, keep - 1:keep]
+        drafts = draft_chain(lm, mtp, pick(h, hn)[:, :keep], a[:, :keep], mcache, k, head, chain)
     dt = time.perf_counter() - t0
     for i, tok in enumerate(out):
         if tok in eos:
             out = out[: i + 1]
             break
     out = out[:max_tokens]
-    return out, (len(out) - 1) / dt, accepted / max(drafted, 1)
+    stats = {"tps": (len(out) - 1) / dt, "tok_ciclo": (len(out) - 1) / max(cycles, 1),
+             "acept": [n / max(cycles, 1) for n in acc_pos]}
+    return out, stats
 
 
 PROMPTS = [
@@ -227,6 +255,9 @@ def main():
     ap.add_argument("--mtp-quant", default="nvfp4", help="none | nvfp4 | 8 | 4")
     ap.add_argument("--draft-vocab", type=int, default=0, help="0 = usar el lm_head principal")
     ap.add_argument("--draft-bits", default="4")
+    ap.add_argument("--k", type=int, default=2, help="borradores por ciclo")
+    ap.add_argument("--bb-hidden", default="pre", help="pre | post: hidden del modelo que ve la MTP")
+    ap.add_argument("--chain", default="pre", help="pre | post: hidden de la MTP para encadenar")
     ap.add_argument("--max-tokens", type=int, default=256)
     ap.add_argument("--no-baseline", action="store_true")
     args = ap.parse_args()
@@ -238,9 +269,11 @@ def main():
     mtp = load_mtp(lm, bits(args.mtp_quant))
     eos = set(tok.eos_token_ids)
     head = load_draft_head(args.draft_vocab, bits(args.draft_bits)) if args.draft_vocab else None
-    print(f"lm_head={args.lm_head} mtp={args.mtp_quant} draft={args.draft_vocab}/{args.draft_bits}b mem {mx.get_active_memory()/1e9:.2f} GB")
+    print(f"lm_head={args.lm_head} mtp={args.mtp_quant} draft={args.draft_vocab}/{args.draft_bits}b "
+          f"k={args.k} bb={args.bb_hidden} chain={args.chain} mem {mx.get_active_memory()/1e9:.2f} GB")
 
     tot_base = tot_mtp = 0.0
+    tot_cyc = 0.0
     for prompt in PROMPTS:
         ids = tok.apply_chat_template([{"role": "user", "content": prompt}],
                                       add_generation_prompt=True, enable_thinking=False)
@@ -250,18 +283,22 @@ def main():
                 ref.append(r.token)
                 last = r
             base_tps = last.generation_tps
-        out, tps, acc = generate_mtp(lm, mtp, ids, args.max_tokens, eos, head)
+        out, st = generate_mtp(lm, mtp, ids, args.max_tokens, eos, head, args.k, args.bb_hidden, args.chain)
+        tps = st["tps"]
+        tot_mtp += tps
+        tot_cyc += st["tok_ciclo"]
+        acc = " ".join(f"{x*100:4.1f}%" for x in st["acept"])
         if args.no_baseline:
-            print(f"  mtp {tps:5.1f} tok/s  acept {acc*100:4.1f}%  ({len(out)} tok)  {prompt[:40]}")
+            print(f"  mtp {tps:5.1f} tok/s  {st['tok_ciclo']:.2f} tok/ciclo  acept {acc}  "
+                  f"({len(out)} tok)  {prompt[:40]}")
             continue
         same = next((i for i, (x, y) in enumerate(zip(out, ref)) if x != y), min(len(out), len(ref)))
         tot_base += base_tps
-        tot_mtp += tps
         print(f"  base {base_tps:5.1f} tok/s | mtp {tps:5.1f} tok/s ({tps/base_tps:.2f}x)  "
-              f"acept {acc*100:4.1f}%  idénticos {same}/{len(ref)}  {prompt[:40]}")
-    if not args.no_baseline:
-        print(f"media: base {tot_base/len(PROMPTS):.1f} tok/s -> mtp {tot_mtp/len(PROMPTS):.1f} tok/s "
-              f"({tot_mtp/tot_base:.2f}x)")
+              f"{st['tok_ciclo']:.2f} tok/ciclo  acept {acc}  idénticos {same}/{len(ref)}  {prompt[:40]}")
+    n = len(PROMPTS)
+    print(f"media: mtp {tot_mtp/n:.1f} tok/s, {tot_cyc/n:.2f} tok/ciclo"
+          + (f"  (base {tot_base/n:.1f} tok/s -> {tot_mtp/tot_base:.2f}x)" if tot_base else ""))
     print(tok.decode(out)[:300].replace("\n", " "))
 
 
