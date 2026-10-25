@@ -119,6 +119,13 @@ Qué hizo falta para que k=2 gane a k=1:
   en el mismo camino MTP da los mismos 200 tokens que el bf16 completo en los 4 prompts. Banco
   intercalado: k=2 **28,6 → 31,4 tok/s (1,65× la base)**. Para muestrear con top_k > 32 usa 4·top_k
   candidatos (256 si top_k = 0). Cuesta ~1,8 GB más de RAM, porque mantiene el `lm_head` bf16.
+- **No ganaron: cabeza MTP a 8 bits ni k adaptativo** (`generate_mtp(..., tau=0.15)`, configuraciones
+  `k2h8`, `k2ha` y `k3ha` de `bench_ab.py`). El k adaptativo verifica solo los borradores cuya
+  probabilidad acumulada según la MTP supera τ. La MTP a 8 bits acierta algo más (2,19 tokens por ciclo
+  frente a 2,14) y con k3ha llega a 2,30–2,35, pero cuestan más cálculo. En frío empatan (±2 %) y con el
+  Air caliente pierden: 3 rondas, base 16,9 tok/s, k2h 27,1 (1,60×), k2h8 26,7, k3ha 25,1, k3ha8 25,5. En
+  un equipo que baja de frecuencia, la configuración más ligera (k=2 fijo, MTP NVFP4) es la más robusta.
+  Para acertar bastante más haría falta un árbol de borradores o reentrenar la cabeza MTP.
 - `lab_gdn.py` separa en las 24 GDN el coste de las proyecciones (~10 ms, lectura de pesos) del tramo
   central (~3–4 ms).
 

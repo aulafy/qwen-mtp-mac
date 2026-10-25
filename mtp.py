@@ -207,60 +207,89 @@ def mtp_step(lm, mtp, hidden, tokens, mcache, head=None):
     return (head or lm.lm_head)(xn), x, xn
 
 
-def draft_chain(lm, mtp, hidden, tokens, mcache, k, head=None, chain="pre"):
+def draft_chain(lm, mtp, hidden, tokens, mcache, k, head=None, chain="pre", with_probs=False):
     """k borradores: el primero con los pares reales, los siguientes reutilizando el hidden de la propia MTP.
-    Deja k-1 entradas especulativas en mcache (se recortan en el ciclo siguiente)."""
+    Deja k-1 entradas especulativas en mcache (se recortan en el ciclo siguiente). Con with_probs devuelve
+    también la probabilidad que la MTP da a cada borrador (para el k adaptativo)."""
     pick = head.token if head is not None else (lambda l: mx.argmax(l, axis=-1))
+    drafts, probs = [], []
     logits, x, xn = mtp_step(lm, mtp, hidden, tokens, mcache, head)
-    drafts = [pick(logits)]
-    for _ in range(k - 1):
-        logits, x, xn = mtp_step(lm, mtp, x if chain == "pre" else xn, drafts[-1], mcache, head)
+    for i in range(k):
+        if i:
+            logits, x, xn = mtp_step(lm, mtp, x if chain == "pre" else xn, drafts[-1], mcache, head)
         drafts.append(pick(logits))
-    return mx.concatenate(drafts, axis=1)
+        if with_probs:
+            probs.append(mx.softmax(logits.astype(mx.float32), axis=-1).max(axis=-1))
+    drafts = mx.concatenate(drafts, axis=1)
+    return (drafts, mx.concatenate(probs, axis=1)) if with_probs else drafts
 
 
-def generate_mtp(lm, mtp, prompt_ids, max_tokens, eos, head=None, k=1, bb_hidden="pre", chain="pre"):
+def n_drafts(probs, tau):
+    """k adaptativo: verificar los borradores mientras la probabilidad acumulada supere tau (mínimo 1).
+    Verificar un token más cuesta ~8 % de ciclo; compensa si p(aceptar) > ~0,15."""
+    n, acc = 0, 1.0
+    for p in probs:
+        acc *= p
+        if n and acc < tau:
+            break
+        n += 1
+    return n
+
+
+def generate_mtp(lm, mtp, prompt_ids, max_tokens, eos, head=None, k=1, bb_hidden="pre", chain="pre", tau=None):
+    """tau: None = siempre k borradores; un número = k adaptativo (n_drafts)."""
     cache = lm.make_cache()
     mcache = [KVCache() for _ in mtp.layers]
     lin = [c for c in cache if isinstance(c, ArraysCache)]
     kv = [c for c in cache if isinstance(c, KVCache)]
     pick = (lambda h, hn: h) if bb_hidden == "pre" else (lambda h, hn: hn)
+    adaptive = tau is not None
+
+    def drafts_for(hidden, toks):
+        r = draft_chain(lm, mtp, hidden, toks, mcache, k, head, chain, with_probs=adaptive)
+        if not adaptive:
+            return r, k
+        d, pr = r
+        mx.eval(d, pr)
+        return d, n_drafts(pr[0].tolist(), tau)
 
     p = mx.array(prompt_ids)[None]
     logits, h, hn = backbone(lm, p, cache)
     t = mx.argmax(logits[:, -1:], axis=-1)
     # la MTP ve los pares (H[i], token[i+1]) de todo el prompt y propone los primeros borradores
-    drafts = draft_chain(lm, mtp, pick(h, hn), mx.concatenate([p[:, 1:], t], axis=1), mcache, k, head, chain)
+    drafts, n_use = drafts_for(pick(h, hn), mx.concatenate([p[:, 1:], t], axis=1))
     mx.eval(t, drafts)
     t0 = time.perf_counter()
     out = [t.item()]
-    cycles = 0
+    cycles = verified = 0
     acc_pos = [0] * k  # aciertos por posición del borrador
     while len(out) < max_tokens and out[-1] not in eos:
+        S = n_use + 1
         for c in lin:
             c.snap = True
-        logits, h, hn = backbone(lm, mx.concatenate([t, drafts], axis=1), cache)
+        logits, h, hn = backbone(lm, mx.concatenate([t, drafts[:, :n_use]], axis=1), cache)
         for c in lin:
             c.snap = False
-        a = mx.argmax(logits, axis=-1)  # [1, k+1]: predicción tras t, d1, ..., dk
+        a = mx.argmax(logits, axis=-1)  # [1, S]: predicción tras t, d1, ..., d_n
         mx.eval(a)
         av, dv = a[0].tolist(), drafts[0].tolist()
         n_acc = 0
-        while n_acc < k and av[n_acc] == dv[n_acc]:
+        while n_acc < n_use and av[n_acc] == dv[n_acc]:
             acc_pos[n_acc] += 1
             n_acc += 1
         cycles += 1
+        verified += n_use
         keep = n_acc + 1  # t y los borradores aceptados
         out += av[:keep]  # borradores aceptados (== av) + el token corregido/extra del modelo
-        if keep < k + 1:
+        if keep < S:
             for c in lin:
                 restore(c, keep)
             for c in kv:
-                c.trim(k + 1 - keep)
+                c.trim(S - keep)
         for c in mcache:
-            c.trim(k - 1)
+            c.trim(k - 1)  # entradas especulativas de la cadena (se calcularon k borradores)
         t = a[:, keep - 1:keep]
-        drafts = draft_chain(lm, mtp, pick(h, hn)[:, :keep], a[:, :keep], mcache, k, head, chain)
+        drafts, n_use = drafts_for(pick(h, hn)[:, :keep], a[:, :keep])
     dt = time.perf_counter() - t0
     for i, tok in enumerate(out):
         if tok in eos:
@@ -268,7 +297,7 @@ def generate_mtp(lm, mtp, prompt_ids, max_tokens, eos, head=None, k=1, bb_hidden
             break
     out = out[:max_tokens]
     stats = {"tps": (len(out) - 1) / dt, "tok_ciclo": (len(out) - 1) / max(cycles, 1),
-             "acept": [n / max(cycles, 1) for n in acc_pos]}
+             "acept": [n / max(cycles, 1) for n in acc_pos], "borradores_ciclo": verified / max(cycles, 1)}
     return out, stats
 
 
