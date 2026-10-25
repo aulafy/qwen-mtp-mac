@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Arranca el modelo (si no está ya en marcha) y abre el chat en el navegador.
 # Lo usa la app «Chat Qwen.app». El servidor se cierra solo tras DS_METAL_IDLE minutos sin uso
-# (30 por defecto) para devolver los ~7,5 GB de RAM; el siguiente doble clic lo vuelve a cargar.
+# (30 por defecto) para devolver los ~9 GB de RAM; el siguiente doble clic lo vuelve a cargar.
 DIR="${0:A:h}"
 PORT="${DS_METAL_PORT:-11435}"
 URL="http://127.0.0.1:$PORT/chat"
