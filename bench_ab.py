@@ -8,9 +8,11 @@ Uso: python bench_ab.py [--rounds 2] [--max-tokens 128] [--configs base,k1,k2,k1
 import argparse
 import time
 
+import tuning  # noqa: F401  (antes que mlx)
 import mlx.core as mx
 from mlx_lm import stream_generate
 
+import gdn_fused
 import mtp as M
 import qmv_kernel
 import qwen_ollama
@@ -42,7 +44,8 @@ def main():
     lm = model.language_model
     mtp = M.load_mtp(lm, MTP_Q)
     eos = set(tok.eos_token_ids)
-    # kN = MTP con N borradores y lm_head de borrador reducido (ids frecuentes); kNf = vocabulario completo
+    # kN = MTP con N borradores y lm_head de borrador reducido (ids frecuentes); kNf = vocabulario completo;
+    # kNg = además la GatedDeltaNet fusionada (gdn_fused.py)
     heads = {"": M.load_draft_head(args.draft_vocab, DRAFT_HEAD, freq=True, extra_ids=eos),
              "f": M.load_draft_head(248320, DRAFT_HEAD)}
     print(f"mem {mx.get_active_memory()/1e9:.2f} GB")
@@ -59,8 +62,10 @@ def main():
             for c in order:
                 if c == "base":
                     n, dt = run_base(model, tok, ids, args.max_tokens)
-                else:
-                    out, st = M.generate_mtp(lm, mtp, ids, args.max_tokens, eos, heads[c[2:]], k=int(c[1]))
+                else:  # kN[f][g]: f = borrador con vocabulario completo, g = GatedDeltaNet fusionada
+                    (gdn_fused.install if "g" in c[2:] else gdn_fused.uninstall)()
+                    head = heads["f" if "f" in c[2:] else ""]
+                    out, st = M.generate_mtp(lm, mtp, ids, args.max_tokens, eos, head, k=int(c[1]))
                     n, dt = len(out) - 1, (len(out) - 1) / st["tps"]
                     cyc[c][0] += st["tok_ciclo"]
                     cyc[c][1] += 1

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 
+import tuning  # noqa: F401  (antes que mlx)
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.models import qwen3_5

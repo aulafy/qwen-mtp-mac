@@ -97,6 +97,23 @@ Qué hizo falta para que k=2 gane a k=1:
   verificación de 2 tokens en 58 ms, frente a 56 ms para 1. Sin él, partir la llamada en dos se comía
   la ganancia.
 
+### Lo que dio y lo que no (26‑oct, ideas del OKC)
+
+- **Ganó: command buffers de MLX (`tuning.py`).** Con `MLX_MAX_OPS_PER_BUFFER=10`, la GPU empieza antes en
+  vez de esperar a que se cierre un buffer grande. La pasada de 1 token baja de 56 a 52 ms y la de 3 tokens
+  de 70 a 62. En el banco intercalado, MTP k=2 sube de 27,5 a **28,8 tok/s (1,47× la base)**; la base no
+  cambia porque mlx-lm ya solapa CPU y GPU. Con el valor por defecto quedaba oculta la ganancia del GEMV
+  multi-fila con 3 tokens. Hay que importar `tuning` antes que `mlx`, porque el valor se lee al crear el
+  dispositivo.
+- **No ganó: GatedDeltaNet fusionada (`gdn_fused.py`, desactivada).** Reduce las ~20 operaciones del
+  tramo central a 3 y es **idéntica bit a bit** a mlx-lm: reproduce sus redondeos bf16 y sus fórmulas de
+  sigmoid, softplus y rms_norm, comprobado sobre los 65.536 valores bf16. Aislada, baja ese tramo de 4,0 a
+  2,9 ms con 3 tokens, pero en la pasada completa no se nota (61,8 frente a 62,2 ms; k2 28,8 frente a
+  28,5). Con buffers pequeños, esas operaciones ya no frenan a la GPU. Se activa con
+  `gdn_fused.install()`.
+- `lab_gdn.py` separa en las 24 GDN el coste de las proyecciones (~10 ms, lectura de pesos) del tramo
+  central (~3–4 ms).
+
 ## Chat (interfaz web mínima)
 
 **Doble clic en `Chat Qwen.app`**: si el modelo no está en marcha lo carga (~5 s), y abre

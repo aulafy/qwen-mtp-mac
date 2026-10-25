@@ -13,6 +13,7 @@ import gc
 import time
 from pathlib import Path
 
+import tuning  # noqa: F401  (antes que mlx)
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np

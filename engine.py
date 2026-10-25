@@ -13,6 +13,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+import tuning  # noqa: F401  (antes que mlx)
 import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache, KVCache
 
