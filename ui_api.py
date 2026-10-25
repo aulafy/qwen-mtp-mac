@@ -1,6 +1,6 @@
 """Datos de la interfaz de chat: conversaciones, memoria y texto de archivos subidos.
 
-Todo queda en ds-metal/datos/ (fuera de git):
+Todo queda en datos/ (fuera de git):
   chats/<id>.json  una conversación (mensajes, ajustes, archivos adjuntos ya convertidos a texto)
   memoria.md       notas que se incluyen en todos los chats (editable a mano)
 """

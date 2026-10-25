@@ -1,5 +1,7 @@
 """Tramo central de GatedDeltaNet (Qwen3.5) fusionado para decode/verificación (S <= 16 tokens, B = 1).
 
+Partes adaptadas de mlx-lm (https://github.com/ml-explore/mlx-lm), Copyright © 2023 Apple Inc., licencia MIT.
+
 mlx-lm hace ~20 operaciones pequeñas por capa entre las proyecciones (conv1d, silu, normas de q/k,
 compuertas, delta rule, norma con compuerta). Aquí son 3: concatenar la ventana de la convolución y
 dos kernels Metal:

@@ -5,3 +5,4 @@ __pycache__/
 .ollama_qwen/
 datos/
 *.app/
+.pytest_cache/

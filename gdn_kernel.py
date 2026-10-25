@@ -1,5 +1,7 @@
 """GatedDeltaNet de decode con instantánea del estado, en un solo dispatch Metal.
 
+Partes adaptadas de mlx-lm (https://github.com/ml-explore/mlx-lm), Copyright © 2023 Apple Inc., licencia MIT.
+
 Variante del kernel de mlx-lm (gated_delta.py, sin máscara, gating escalar) que, además del estado
 final, escribe el estado tras cada uno de los primeros T-1 tokens. Es lo que necesita la verificación
 especulativa: procesar [t, d1, ..., dk] de una vez y poder volver al estado tras cualquier prefijo.

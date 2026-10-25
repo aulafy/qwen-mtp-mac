@@ -1,0 +1,5 @@
+# Versiones fijadas: el proyecto sustituye métodos internos de mlx-lm (GatedDeltaNet, QuantizedLinear).
+mlx==0.31.2
+mlx-lm==0.31.3
+numpy
+pypdf

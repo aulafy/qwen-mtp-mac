@@ -195,7 +195,7 @@ def run(ids, prefix_len, max_tokens, sp, think, stops, on_piece):
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "ds-metal"
+    server_version = "qwen-mtp-mac"
 
     def handle(self):
         try:
@@ -280,14 +280,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/chat", "/chat/", "/ui"):
             return self._send(200, UI_HTML.read_bytes(), "text/html; charset=utf-8")
         if self.path == "/api/version":
-            return self._send(200, {"version": "0.30.10-ds-metal"})
+            return self._send(200, {"version": "0.30.10-qwen-mtp-mac"})
         if self.path == "/api/tags":
             return self._send(200, {"models": [self._model_card()]})
         if self.path == "/api/ps":
             return self._send(200, {"models": [{**self._model_card(), "expires_at": "2099-01-01T00:00:00Z"}]})
         if self.path == "/v1/models":
             return self._send(200, {"object": "list", "data": [
-                {"id": MODEL, "object": "model", "created": int(time.time()), "owned_by": "ds-metal"}]})
+                {"id": MODEL, "object": "model", "created": int(time.time()), "owned_by": "qwen-mtp-mac"}]})
         if self.path == "/ui/api/chats":
             return self._send(200, ui_api.list_chats())
         if self.path.startswith("/ui/api/chats/"):
@@ -370,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _model_card(self):
         return {"name": MODEL, "model": MODEL, "modified_at": now_iso(), "size": 7_000_000_000,
-                "digest": "ds-metal", "details": {"format": "safetensors", "family": "qwen35",
+                "digest": "qwen-mtp-mac", "details": {"format": "safetensors", "family": "qwen35",
                                                   "families": ["qwen35"], "parameter_size": "9B",
                                                   "quantization_level": "NVFP4"}}
 
@@ -521,7 +521,7 @@ def main():
     global ENGINE, WORKER, ARGS
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=int(os.environ.get("DS_METAL_PORT", 11435)))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("QWEN_MTP_PORT", 11435)))
     ap.add_argument("--k", type=int, default=2, help="borradores MTP por ciclo")
     ap.add_argument("--lm-head", default="2f", help="2f (dos fases, por defecto) o bits: 6, 8...")
     ap.add_argument("--think", action="store_true", help="razonamiento activado por defecto")

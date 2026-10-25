@@ -2,7 +2,7 @@
 
 El lm_head de borrador solo puntúa estos ids (mucho más barato); si el token correcto no está, el
 borrador falla y el modelo lo corrige, así que la salida no cambia, solo la aceptación.
-Uso: python build_draft_vocab.py [raíz del corpus] [--max-mb 40]   (por defecto, la carpeta padre)
+Uso: python build_draft_vocab.py CARPETA [--max-mb 40]
 """
 import argparse
 import collections
@@ -46,7 +46,7 @@ def count(tok, root, exts, max_mb, max_file_kb):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("root", nargs="?", default=str(Path(__file__).resolve().parent.parent))
+    ap.add_argument("root", help="carpeta con tus textos (md, txt, código...) para contar frecuencias")
     ap.add_argument("--max-mb", type=float, default=40)
     ap.add_argument("--max-file-kb", type=float, default=300)
     args = ap.parse_args()

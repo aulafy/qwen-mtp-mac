@@ -1,9 +1,11 @@
 """Decodificación especulativa con la cabeza MTP nativa de Qwen3.5 (greedy), sobre mlx-lm 0.31.3.
 
-Cada ciclo: la cabeza MTP propone 1 token (d); el modelo verifica [t, d] en UNA pasada (los pesos
-se leen una vez para los 2 tokens). Si acierta salen 2 tokens (d + el siguiente del modelo); si
-falla sale 1 y se deshace el estado: las capas de atención recortan 1 posición de la KV cache y las
-GatedDeltaNet recuperan el estado (conv + recurrente) guardado tras el primer token.
+Partes adaptadas de mlx-lm (https://github.com/ml-explore/mlx-lm), Copyright © 2023 Apple Inc., licencia MIT.
+
+Cada ciclo: la cabeza MTP propone k tokens (k=2 por defecto); el modelo verifica [t, d1, ..., dk] en UNA
+pasada (los pesos se leen una vez para todos). Salen los borradores acertados más el siguiente token del
+modelo; lo rechazado se deshace: las capas de atención recortan la KV cache y las GatedDeltaNet recuperan
+el estado (conv + recurrente) guardado tras el último token aceptado.
 La salida es la misma que el greedy normal (salvo empates numéricos).
 
 Uso: python mtp.py [--k 2] [--lm-head 2f|6|8] [--mtp-quant nvfp4|8|none] [--max-tokens 256]
