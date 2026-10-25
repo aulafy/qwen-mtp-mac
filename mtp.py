@@ -6,14 +6,16 @@ falla sale 1 y se deshace el estado: las capas de atención recortan 1 posición
 GatedDeltaNet recuperan el estado (conv + recurrente) guardado tras el primer token.
 La salida es la misma que el greedy normal (salvo empates numéricos).
 
-Uso: python mtp.py [--lm-head 8] [--mtp-quant nvfp4|8|none] [--max-tokens 256]
+Uso: python mtp.py [--k 2] [--lm-head 6] [--mtp-quant nvfp4|8|none] [--max-tokens 256]
 """
 import argparse
+import gc
 import time
 from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 from mlx_lm import stream_generate
 from mlx_lm.models import qwen3_5
 from mlx_lm.models.base import create_attention_mask, create_ssm_mask
@@ -22,6 +24,7 @@ from mlx_lm.models.gated_delta import compute_g, gated_delta_update
 
 import qwen_ollama
 from gdn_kernel import gated_delta_snapshot
+import qmv_kernel
 
 MTP_PATH = Path(__file__).parent / ".ollama_qwen" / "mtp.safetensors"
 
@@ -146,22 +149,47 @@ def backbone(lm, tokens, cache):
     return lm.lm_head(hn), h, hn
 
 
-def load_draft_head(vocab, quant):
-    """lm_head barato solo para proponer: los `vocab` primeros ids (BPE ~ ordenado por frecuencia)
-    y menos bits. No cambia la salida (la verifica el lm_head completo), solo la aceptación."""
+class DraftHead:
+    """lm_head barato solo para proponer. Con `ids` puntúa solo ese subconjunto del vocabulario."""
+
+    def __init__(self, proj, ids=None):
+        self.proj, self.ids = proj, ids
+
+    def __call__(self, x):
+        return self.proj(x)
+
+    def token(self, logits):
+        i = mx.argmax(logits, axis=-1)
+        return i if self.ids is None else self.ids[i]
+
+
+def load_draft_head(vocab, quant, freq=False, extra_ids=()):
+    """`vocab` primeros ids o, con freq=True, los `vocab` más frecuentes del corpus local
+    (build_draft_vocab.py), con menos bits. No cambia la salida (la verifica el lm_head completo),
+    solo la aceptación."""
     jsons, tensors = qwen_ollama._manifest("9b-mlx")
     for path in tensors:
         w = mx.load(str(path), format="safetensors")
         if "language_model.lm_head.weight" in w:
-            W = w["language_model.lm_head.weight"][:vocab]
+            W = w["language_model.lm_head.weight"]
             break
+    ids = None
+    if freq:
+        counts = np.load(qwen_ollama.CACHE_DIR / "draft_vocab_counts.npy")[: W.shape[0]]
+        top = set(np.argsort(-counts)[:vocab].tolist()) | set(extra_ids)
+        ids = mx.array(sorted(top), dtype=mx.uint32)
+        W = mx.take(W, ids, axis=0)
+    else:
+        W = W[:vocab]
     head = nn.Linear(W.shape[1], W.shape[0], bias=False)
     head.weight = mx.contiguous(W)
     del w, W
     if quant:  # nn.quantize no sustituye el módulo raíz
         head = nn.QuantizedLinear.from_linear(head, **quant)
     mx.eval(head.parameters())
-    return head
+    gc.collect()  # suelta la copia bf16 de 2 GB del blob
+    mx.clear_cache()
+    return DraftHead(head, ids)
 
 
 def mtp_step(lm, mtp, hidden, tokens, mcache, head=None):
@@ -180,11 +208,12 @@ def mtp_step(lm, mtp, hidden, tokens, mcache, head=None):
 def draft_chain(lm, mtp, hidden, tokens, mcache, k, head=None, chain="pre"):
     """k borradores: el primero con los pares reales, los siguientes reutilizando el hidden de la propia MTP.
     Deja k-1 entradas especulativas en mcache (se recortan en el ciclo siguiente)."""
+    pick = head.token if head is not None else (lambda l: mx.argmax(l, axis=-1))
     logits, x, xn = mtp_step(lm, mtp, hidden, tokens, mcache, head)
-    drafts = [mx.argmax(logits, axis=-1)]
+    drafts = [pick(logits)]
     for _ in range(k - 1):
         logits, x, xn = mtp_step(lm, mtp, x if chain == "pre" else xn, drafts[-1], mcache, head)
-        drafts.append(mx.argmax(logits, axis=-1))
+        drafts.append(pick(logits))
     return mx.concatenate(drafts, axis=1)
 
 
@@ -251,24 +280,33 @@ PROMPTS = [
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--lm-head", default="8", help="none | 8 | 6 | 4 (bits del lm_head)")
+    ap.add_argument("--lm-head", default="6", help="none | 8 | 6 | 4 (bits del lm_head)")
     ap.add_argument("--mtp-quant", default="nvfp4", help="none | nvfp4 | 8 | 4")
-    ap.add_argument("--draft-vocab", type=int, default=0, help="0 = usar el lm_head principal")
+    ap.add_argument("--draft-vocab", type=int, default=65536, help="0 = usar el lm_head principal")
     ap.add_argument("--draft-bits", default="4")
+    ap.add_argument("--draft-first-ids", action="store_true",
+                    help="vocab de borrador = primeros ids (por defecto: los más frecuentes, build_draft_vocab.py)")
     ap.add_argument("--k", type=int, default=2, help="borradores por ciclo")
     ap.add_argument("--bb-hidden", default="pre", help="pre | post: hidden del modelo que ve la MTP")
     ap.add_argument("--chain", default="pre", help="pre | post: hidden de la MTP para encadenar")
     ap.add_argument("--max-tokens", type=int, default=256)
     ap.add_argument("--no-baseline", action="store_true")
+    ap.add_argument("--no-qmv", action="store_true", help="no usar el GEMV NVFP4 multi-fila propio")
     args = ap.parse_args()
 
     bits = lambda s: None if s == "none" else (
         {"bits": 4, "group_size": 16, "mode": "nvfp4"} if s == "nvfp4" else {"bits": int(s), "group_size": 64})
+    if not args.no_qmv:
+        qmv_kernel.install()
     model, tok = qwen_ollama.load(lm_head_quant=bits(args.lm_head))
     lm = model.language_model
     mtp = load_mtp(lm, bits(args.mtp_quant))
     eos = set(tok.eos_token_ids)
-    head = load_draft_head(args.draft_vocab, bits(args.draft_bits)) if args.draft_vocab else None
+    freq = not args.draft_first_ids and (qwen_ollama.CACHE_DIR / "draft_vocab_counts.npy").exists()
+    if args.draft_vocab and not freq and not args.draft_first_ids:
+        print("sin draft_vocab_counts.npy (python build_draft_vocab.py): borrador con vocabulario completo")
+        args.draft_vocab = 248320
+    head = load_draft_head(args.draft_vocab, bits(args.draft_bits), freq, eos) if args.draft_vocab else None
     print(f"lm_head={args.lm_head} mtp={args.mtp_quant} draft={args.draft_vocab}/{args.draft_bits}b "
           f"k={args.k} bb={args.bb_hidden} chain={args.chain} mem {mx.get_active_memory()/1e9:.2f} GB")
 

@@ -46,8 +46,10 @@ Reutiliza los pesos NVFP4 de `qwen3.5:9b-mlx` de Ollama sin descargarlos otra ve
 Solo se bajan los ~0,5 GB de la cabeza MTP oficial, con peticiones por rangos (`fetch_mtp.py`).
 
 ```bash
-.venv/bin/python fetch_mtp.py
-.venv/bin/python mtp.py --lm-head 6 --mtp-quant nvfp4 --draft-vocab 248320 --draft-bits 4
+.venv/bin/python fetch_mtp.py          # cabeza MTP (~0,5 GB)
+.venv/bin/python build_draft_vocab.py  # ids frecuentes para el lm_head de borrador (corpus = carpeta padre)
+.venv/bin/python mtp.py                # k=2, lm_head 6 bits, borrador 64k ids a 4 bits
+.venv/bin/python bench_ab.py           # banco intercalado base / k1 / k2
 ```
 
 | Configuración (M4 24 GB, greedy, 4 prompts × 256 tokens) | tok/s |
@@ -56,6 +58,34 @@ Solo se bajan los ~0,5 GB de la cabeza MTP oficial, con peticiones por rangos (`
 | MLX con los mismos pesos | 15,0–15,4 |
 | + `lm_head` cuantizado (Ollama lo deja en bf16: 2 GB por token) | 17,5–18,7 (8 bits) · 20,2 (4 bits) |
 | + decodificación especulativa con la cabeza MTP nativa + kernel `gdn_kernel.py` | **22–26 (media 24,0)** |
+
+### 2 borradores por ciclo (k=2)
+
+El equipo es un MacBook Air M4 (Mac16,13), sin ventilador. Con carga sostenida la GPU baja de frecuencia:
+la base pasa de ~18,7 a ~15 tok/s en pocos minutos. Por eso `bench_ab.py` intercala las configuraciones
+prompt a prompt. Resultado con el equipo ya caliente (2 rondas × 4 prompts × 128 tokens):
+
+| Configuración | tok/s | vs base | tokens/ciclo |
+|---|---|---|---|
+| base (mlx-lm) | 15,1 | 1,00× | — |
+| MTP k=1 | 19,6 | 1,30× | 1,72 |
+| **MTP k=2 + borrador 64k ids** | **21,3** | **1,41×** | 2,13 |
+| MTP k=2, borrador con vocabulario completo | 20,1 | 1,33× | 2,18 |
+
+En frío el primer prompt llega a 27–29 tok/s con k=2. k=3 no compensa: el tercer borrador acierta solo
+el 16–40 % de las veces.
+
+Qué hizo falta para que k=2 gane a k=1:
+- **`qmv_kernel.py`**: GEMV NVFP4 para 3–4 filas que lee cada peso una vez. El `quantized_matmul` de MLX
+  crece con M (M=3 +16 %, M=4 +53 %). El nuestro, con productos `float4`, se queda plano y es exacto
+  (logits idénticos bit a bit a MLX): 3 filas en 294 µs frente a 339, 4 filas en 305 frente a 447 (capa
+  de 12288×4096). Verificar 3 tokens pasa de 69 a 61 ms y 4 tokens de 89 a 66 ms. La primera versión,
+  con cadenas de FMA dependientes, era más lenta que MLX (505 µs).
+- **`gdn_kernel.py`** guarda el estado tras cada token para volver a cualquier prefijo.
+- **Borrador barato**: el `lm_head` de borrador solo puntúa los 64k ids más frecuentes de un corpus
+  local, mezcla normalizada de todo (código/JSON) y solo prosa. Cubre el 93–98 % de lo que genera el
+  modelo, frente al 73–90 % del top‑32k con el corpus solo de código. Cada borrador baja de ~8 ms.
+- El segundo borrador encadena el hidden pre-norm de la propia MTP (pre y post-norm aciertan igual).
 
 - `lm_head`: a 8 bits coincide en el 98,7 % de los top‑1 (KL 0,0002); a 6 bits igual (KL 0,0005); a 4 bits
   baja al 97 % (KL 0,004).
