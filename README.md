@@ -97,6 +97,36 @@ Qué hizo falta para que k=2 gane a k=1:
   verificación de 2 tokens en 58 ms, frente a 56 ms para 1. Sin él, partir la llamada en dos se comía
   la ganancia.
 
+## Servidor local (APIs de Ollama y OpenAI)
+
+```bash
+.venv/bin/python server.py              # http://127.0.0.1:11435, modelo "qwen3.5-mtp:9b"
+.venv/bin/python server.py --port 11434 # en el puerto de Ollama (para Ollama antes)
+.venv/bin/python test_server.py         # prueba con los clientes oficiales (pip install openai ollama)
+```
+
+- **Ollama**: `GET /`, `/api/version`, `/api/tags`, `/api/ps`; `POST /api/chat`, `/api/generate`
+  (NDJSON en streaming o respuesta única), `/api/show`. Opciones: `temperature`, `top_k`, `top_p`, `min_p`,
+  `num_predict`, `stop`, `seed`, y `think`, que devuelve `message.thinking` aparte.
+- **OpenAI**: `GET /v1/models`; `POST /v1/chat/completions` y `/v1/completions` (SSE con `[DONE]`,
+  `stream_options.include_usage`, `stop`, `max_tokens`/`max_completion_tokens`). El razonamiento sale en
+  `reasoning_content` con `chat_template_kwargs: {"enable_thinking": true}`.
+- En cualquier app: URL de Ollama `http://127.0.0.1:11435` o base de OpenAI `http://127.0.0.1:11435/v1`
+  (cualquier api key). El nombre de modelo se ignora: solo hay uno.
+- Por defecto usa los parámetros de Ollama para qwen3.5 (T=1, top_k 20, top_p 0,95). `--greedy` cambia el
+  valor por defecto a T=0, y `--think` activa el razonamiento si la petición no lo indica.
+- Con temperatura usa **muestreo especulativo exacto**: el borrador es determinista, así que se acepta con
+  probabilidad p(d) y, si falla, se muestrea de p sin d. La distribución es la del modelo.
+- **Caché entre turnos**: guarda el estado antes del prompt de generación (`<|im_start|>assistant…`) y en el
+  turno siguiente solo procesa lo nuevo. Recorta las KV caches y restaura las GatedDeltaNet.
+- Un único hilo es dueño del modelo (los streams de MLX son por hilo). Las peticiones simultáneas esperan
+  turno y, si el cliente corta, la generación se detiene.
+- Medido con los clientes oficiales (256 tokens, equipo frío): **28–29 tok/s con T=0 y 25–28 con T=1**.
+  Ollama da 15,2 con el mismo modelo.
+- No soporta: tools/function calling, imágenes ni presence/repeat penalty (los parámetros de Ollama para
+  qwen3.5 incluyen `presence_penalty 1.5`; aquí se ignora). Solo escucha en 127.0.0.1 (`--host` para
+  cambiarlo).
+
 ## Límite de hardware
 
 DeepSeek‑V4.1‑Flash pesa **510 GB** (unos 552B parámetros, 16B activos en decode). No cabe en 24 GB de RAM

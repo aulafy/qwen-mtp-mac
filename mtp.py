@@ -137,8 +137,9 @@ def restore(cache, keep):
     cache[1] = mids[keep - 1]
 
 
-def backbone(lm, tokens, cache):
-    """Como TextModel.__call__ pero devuelve también el hidden pre-norm y post-norm (entrada de la MTP)."""
+def backbone(lm, tokens, cache, last_only=False):
+    """Como TextModel.__call__ pero devuelve también el hidden pre-norm y post-norm (entrada de la MTP).
+    last_only: logits solo de la última posición (prefill: evita [S, 248320] logits)."""
     m = lm.model
     h = m.embed_tokens(tokens)
     fa_mask = create_attention_mask(h, cache[m.fa_idx])
@@ -146,7 +147,7 @@ def backbone(lm, tokens, cache):
     for layer, c in zip(m.layers, cache):
         h = layer(h, mask=ssm_mask if layer.is_linear else fa_mask, cache=c)
     hn = m.norm(h)
-    return lm.lm_head(hn), h, hn
+    return lm.lm_head(hn[:, -1:] if last_only else hn), h, hn
 
 
 class DraftHead:
