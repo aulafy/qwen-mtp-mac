@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat Qwen local</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --side: #efefec; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e2dd;
+  --accent: #0f766e; --accent-ink: #ffffff; --user: #e9efed; --code: #f1f1ee; --danger: #b42318; --think: #f3f3ef;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161716; --panel: #1d1e1d; --side: #121312; --text: #e8e8e4; --muted: #9a9a94; --line: #2c2d2b;
+    --accent: #2dd4bf; --accent-ink: #062b27; --user: #233230; --code: #252624; --danger: #f97066; --think: #222321;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; display: flex; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+textarea, input, select { font: inherit; color: inherit; }
+svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* barra lateral */
+#side { width: 260px; flex: none; background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+#side .top { padding: 14px 12px 8px; }
+.brand { font-weight: 650; font-size: 14px; padding: 2px 6px 12px; display: flex; align-items: center; gap: 8px; }
+.brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.btn { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; width: 100%; text-align: left; }
+.btn:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.btn.primary { background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); }
+#chats { flex: 1; overflow-y: auto; padding: 4px 12px; }
+.chat-item { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.chat-item:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.chat-item.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.chat-item .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-item .del { opacity: 0; color: var(--muted); padding: 2px; border-radius: 4px; }
+.chat-item:hover .del { opacity: 1; }
+.chat-item .del:hover { color: var(--danger); }
+.group { font-size: 12px; color: var(--muted); padding: 12px 10px 4px; }
+#side .bottom { padding: 8px 12px 12px; border-top: 1px solid var(--line); font-size: 14px; }
+
+/* principal */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+header { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
+#title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 4px 3px 10px; background: var(--panel); }
+.pill select { border: 0; background: transparent; padding: 2px 4px; color: var(--text); }
+.meter { width: 56px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); width: 0; }
+.iconbtn { padding: 7px; border-radius: 8px; color: var(--muted); }
+.iconbtn:hover, .iconbtn.on { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+#menu-btn { display: none; }
+
+#settings { display: none; border-bottom: 1px solid var(--line); background: var(--panel); padding: 14px 18px; gap: 14px 22px; flex-wrap: wrap; font-size: 14px; }
+#settings.open { display: flex; }
+#settings label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+#settings .row { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+#settings textarea { width: min(560px, 80vw); min-height: 64px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--bg); }
+#settings input[type=range] { width: 160px; accent-color: var(--accent); }
+#settings input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+#scroll { flex: 1; overflow-y: auto; }
+#msgs { max-width: 780px; margin: 0 auto; padding: 24px 20px 12px; }
+.empty { text-align: center; color: var(--muted); margin-top: 18vh; }
+.empty h1 { color: var(--text); font-size: 22px; font-weight: 650; margin: 0 0 6px; }
+.msg { margin: 0 0 22px; }
+.msg.user { display: flex; flex-direction: column; align-items: flex-end; }
+.msg.user .bubble { background: var(--user); padding: 9px 14px; border-radius: 16px 16px 4px 16px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word; }
+.files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; justify-content: flex-end; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; max-width: 260px; }
+.chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip small { color: var(--muted); }
+.chip button { color: var(--muted); padding: 0 2px; }
+.msg.assistant .body { word-wrap: break-word; }
+.msg.assistant .body > :first-child { margin-top: 0; }
+.msg .stats { font-size: 12px; color: var(--muted); margin-top: 6px; display: flex; gap: 10px; align-items: center; }
+.msg .stats button { color: var(--muted); font-size: 12px; padding: 0; }
+.msg .stats button:hover { color: var(--text); }
+.msg.error .body { color: var(--danger); }
+details.think { background: var(--think); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; font-size: 13.5px; color: var(--muted); }
+details.think summary { cursor: pointer; user-select: none; }
+details.think div { white-space: pre-wrap; margin-top: 6px; max-height: 320px; overflow-y: auto; }
+.body p { margin: 0 0 10px; }
+.body h1, .body h2, .body h3, .body h4 { margin: 16px 0 8px; line-height: 1.3; }
+.body h1 { font-size: 20px; } .body h2 { font-size: 18px; } .body h3 { font-size: 16px; } .body h4 { font-size: 15px; }
+.body ul, .body ol { margin: 0 0 10px; padding-left: 22px; }
+.body li { margin: 2px 0; }
+.body blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.body code { background: var(--code); padding: 1px 5px; border-radius: 5px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.body .code { position: relative; margin: 0 0 12px; }
+.body pre { background: var(--code); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 0; }
+.body pre code { background: none; padding: 0; font-size: 13px; line-height: 1.5; }
+.body .code .copy { position: absolute; top: 6px; right: 6px; font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; opacity: 0; }
+.body .code:hover .copy { opacity: 1; }
+.body table { border-collapse: collapse; margin: 0 0 12px; font-size: 14px; display: block; overflow-x: auto; }
+.body th, .body td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; }
+.body th { background: var(--code); }
+.body hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.body a { color: var(--accent); }
+.cursor::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.status { color: var(--muted); font-size: 13.5px; }
+
+/* composer */
+#composer { max-width: 780px; width: 100%; margin: 0 auto; padding: 8px 20px 18px; }
+#pending { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.box { display: flex; align-items: flex-end; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 6px 6px 6px 8px; box-shadow: var(--shadow); }
+.box:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+#input { flex: 1; border: 0; outline: 0; resize: none; background: transparent; padding: 7px 4px; max-height: 220px; min-height: 22px; line-height: 1.45; }
+#send { background: var(--accent); color: var(--accent-ink); border-radius: 10px; padding: 7px; }
+#send:disabled { opacity: .4; cursor: default; }
+.hint { font-size: 12px; color: var(--muted); text-align: center; margin-top: 6px; }
+#drop { position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 3px dashed var(--accent); display: none; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; z-index: 20; pointer-events: none; }
+#drop.on { display: flex; }
+#banner { display: none; background: var(--danger); color: #fff; padding: 8px 18px; font-size: 14px; }
+#banner.on { display: block; }
+#toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 30; max-width: 90vw; }
+#toast.on { opacity: 1; }
+
+/* memoria */
+#memory { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; align-items: center; justify-content: center; z-index: 25; }
+#memory.on { display: flex; }
+#memory .card { background: var(--panel); border-radius: 14px; width: min(640px, 92vw); padding: 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; }
+#memory h2 { margin: 0; font-size: 17px; }
+#memory p { margin: 0; color: var(--muted); font-size: 13.5px; }
+#memory textarea { min-height: 300px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--bg); resize: vertical; font-size: 14px; }
+#memory .actions { display: flex; gap: 8px; justify-content: flex-end; }
+.solid { background: var(--accent); color: var(--accent-ink); padding: 7px 14px; border-radius: 8px; }
+.ghost { border: 1px solid var(--line); padding: 7px 14px; border-radius: 8px; }
+
+@media (max-width: 760px) {
+  #side { position: fixed; z-index: 15; height: 100%; transform: translateX(-100%); transition: transform .2s; }
+  #side.open { transform: none; }
+  #menu-btn { display: block; }
+  #ctx-label { display: none; }
+}
+</style>
+</head>
+<body>
+<aside id="side">
+  <div class="top">
+    <div class="brand"><span class="dot"></span>Qwen 3.5 9B · local</div>
+    <button class="btn primary" id="new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nuevo chat</button>
+  </div>
+  <div id="chats"></div>
+  <div class="bottom">
+    <button class="btn" id="mem-btn"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3z"/><path d="M9 22h6"/></svg>Memoria</button>
+    <button class="btn" id="off-btn" title="Libera ~7,5 GB de RAM"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg>Apagar modelo</button>
+  </div>
+</aside>
+
+<main id="main">
+  <div id="banner"></div>
+  <header>
+    <button class="iconbtn" id="menu-btn" title="Chats"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <div id="title">Nuevo chat</div>
+    <div class="pill" title="Tokens de la conversación que el modelo tiene en cuenta. Si se llena, se olvidan los mensajes más antiguos.">
+      <span id="ctx-label">Contexto</span>
+      <div class="meter"><i id="meter"></i></div>
+      <span id="ctx-used">0</span>
+      <select id="ctx">
+        <option value="4096">4K</option><option value="8192">8K</option><option value="16384" selected>16K</option>
+        <option value="32768">32K</option><option value="65536">64K</option>
+      </select>
+    </div>
+    <button class="iconbtn" id="sum-btn" title="Guardar un resumen de este chat en la memoria"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button>
+    <button class="iconbtn" id="set-btn" title="Ajustes de este chat"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+  </header>
+  <div id="settings">
+    <label>Instrucciones para este chat
+      <textarea id="system" placeholder="Ej.: Responde siempre en español, de forma breve y con ejemplos."></textarea>
+    </label>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <label>Temperatura <span><input type="range" id="temp" min="0" max="1.5" step="0.05"> <b id="temp-v"></b></span></label>
+      <label class="row"><input type="checkbox" id="think"> Razonar antes de responder (más lento)</label>
+      <label class="row"><input type="checkbox" id="usemem"> Usar la memoria en este chat</label>
+    </div>
+  </div>
+  <div id="scroll"><div id="msgs"></div></div>
+  <div id="composer">
+    <div id="pending"></div>
+    <div class="box">
+      <button class="iconbtn" id="attach" title="Adjuntar archivos (texto, código, CSV, PDF, DOCX)"><svg viewBox="0 0 24 24"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg></button>
+      <textarea id="input" rows="1" placeholder="Escribe un mensaje…"></textarea>
+      <button id="send" title="Enviar (Enter)"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </div>
+    <div class="hint">Enter envía · Shift+Enter salto de línea · arrastra archivos aquí · todo se queda en este Mac</div>
+    <input type="file" id="file" multiple hidden>
+  </div>
+</main>
+
+<div id="memory"><div class="card">
+  <h2>Memoria</h2>
+  <p>Lo que escribas aquí se incluye en todos los chats que tengan la memoria activada. El botón de la bombilla con + en cada chat añade un resumen automático.</p>
+  <textarea id="mem-text" placeholder="- Me llamo …&#10;- Trabajo en …&#10;- Prefiero respuestas cortas"></textarea>
+  <div class="actions"><button class="ghost" id="mem-cancel">Cerrar</button><button class="solid" id="mem-save">Guardar</button></div>
+</div></div>
+<div id="drop">Suelta los archivos para adjuntarlos</div>
+<div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const DEFAULT_SETTINGS = { ctx: 16384, temperature: 0.7, think: false, system: "", useMemory: true };
+const S = { chats: [], chat: null, pending: [], busy: false, ctrl: null, memory: "" };
+
+// ---------- utilidades ----------
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtK = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "K" : String(n));
+const newId = () => crypto.randomUUID().replace(/-/g, "");
+let toastT;
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 3200); }
+function down(msg) { const b = $("#banner"); b.textContent = msg; b.classList.add("on"); }
+
+async function api(path, opts = {}) {
+  let r;
+  try { r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts }); }
+  catch (e) { if (e.name !== "AbortError") down("El modelo no está en marcha. Ábrelo otra vez con «Chat Qwen» (o .venv/bin/python server.py)."); throw e; }
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
+  return r;
+}
+
+// ---------- markdown mínimo y seguro ----------
+function inline(s) {
+  s = esc(s);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return s;
+}
+function table(rows) {
+  const cells = (r) => r.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => inline(c.trim()));
+  const head = cells(rows[0]).map((c) => `<th>${c}</th>`).join("");
+  const body = rows.slice(2).map((r) => "<tr>" + cells(r).map((c) => `<td>${c}</td>`).join("") + "</tr>").join("");
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+function blocks(text) {
+  const lines = text.split("\n"); let out = "", para = [], list = null;
+  const flushP = () => { if (para.length) { out += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
+  const flushL = () => { if (list) { out += `<${list.t}>` + list.items.map((i) => `<li>${inline(i)}</li>`).join("") + `</${list.t}>`; list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+      flushP(); flushL(); const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
+      i--; out += table(rows); continue;
+    }
+    let m;
+    if (!l.trim()) { flushP(); flushL(); continue; }
+    if ((m = l.match(/^(#{1,4})\s+(.*)/))) { flushP(); flushL(); out += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`; continue; }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { flushP(); flushL(); out += "<hr>"; continue; }
+    if ((m = l.match(/^>\s?(.*)/))) { flushP(); flushL(); out += `<blockquote>${inline(m[1])}</blockquote>`; continue; }
+    if ((m = l.match(/^\s*([-*+]|\d+[.)])\s+(.*)/))) {
+      flushP(); const t = /\d/.test(m[1]) ? "ol" : "ul";
+      if (!list || list.t !== t) { flushL(); list = { t, items: [] }; }
+      list.items.push(m[2]); continue;
+    }
+    if (list && /^\s{2,}\S/.test(l)) { list.items[list.items.length - 1] += " " + l.trim(); continue; }
+    flushL(); para.push(l);
+  }
+  flushP(); flushL(); return out;
+}
+function md(src) {
+  return src.split("```").map((p, i) => {
+    if (i % 2 === 0) return blocks(p);
+    const nl = p.indexOf("\n"); const code = nl >= 0 ? p.slice(nl + 1) : p;
+    return `<div class="code"><button class="copy">Copiar</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`;
+  }).join("");
+}
+
+// ---------- chats ----------
+// solo claves conocidas y con valor: un undefined no debe pisar los valores por defecto
+const clean = (o, skip = []) => Object.fromEntries(Object.entries(o || {}).filter(([k, v]) => v !== undefined && v !== null && k in DEFAULT_SETTINGS && !skip.includes(k)));
+function settings() { return { ...DEFAULT_SETTINGS, ...clean(S.chat?.settings) }; }
+function blankChat() { return { id: newId(), title: "", created: Date.now() / 1000, settings: { ...DEFAULT_SETTINGS, ...lastSettings() }, messages: [] }; }
+function lastSettings() { try { return clean(JSON.parse(localStorage.getItem("ds-settings") || "{}"), ["system"]); } catch { return {}; } }
+function rememberSettings() { try { localStorage.setItem("ds-settings", JSON.stringify(settings())); } catch {} }
+
+async function loadChats() { S.chats = await (await api("/ui/api/chats")).json(); renderList(); }
+async function openChat(id) {
+  if (S.busy) return toast("Espera a que termine la respuesta (o detenla).");
+  S.chat = await (await api("/ui/api/chats/" + id)).json();
+  S.pending = []; renderAll(); $("#side").classList.remove("open");
+}
+function newChat() { if (S.busy) return toast("Espera a que termine la respuesta."); S.chat = blankChat(); S.pending = []; renderAll(); $("#input").focus(); $("#side").classList.remove("open"); }
+async function saveChat() {
+  const c = S.chat; if (!c || !c.messages.length) return;
+  if (!c.title) { const u = c.messages.find((m) => m.role === "user"); c.title = ((u?.content || u?.files?.[0]?.name || "Chat").replace(/\s+/g, " ").trim()).slice(0, 60); }
+  await api("/ui/api/chats/" + c.id, { method: "PUT", body: JSON.stringify(c) });
+  loadChats();
+}
+async function deleteChat(id, ev) {
+  ev.stopPropagation();
+  if (!confirm("¿Borrar este chat? No se puede deshacer.")) return;
+  await api("/ui/api/chats/" + id, { method: "DELETE" });
+  if (S.chat?.id === id) newChat();
+  loadChats();
+}
+
+// ---------- render ----------
+function renderList() {
+  const box = $("#chats"); box.innerHTML = "";
+  const now = Date.now() / 1000; let last = "";
+  for (const c of S.chats) {
+    const age = now - c.updated, g = age < 86400 ? "Hoy" : age < 7 * 86400 ? "Últimos 7 días" : "Anteriores";
+    if (g !== last) { box.insertAdjacentHTML("beforeend", `<div class="group">${g}</div>`); last = g; }
+    const el = document.createElement("div");
+    el.className = "chat-item" + (S.chat?.id === c.id ? " active" : "");
+    el.innerHTML = `<span class="t">${esc(c.title)}</span><button class="del" title="Borrar"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>`;
+    el.onclick = () => openChat(c.id);
+    el.querySelector(".del").onclick = (e) => deleteChat(c.id, e);
+    box.appendChild(el);
+  }
+}
+function msgEl(m, live = false) {
+  const el = document.createElement("div");
+  el.className = "msg " + m.role + (m.error ? " error" : "");
+  if (m.role === "user") {
+    const files = (m.files || []).map((f) => `<span class="chip" title="${esc(f.name)}"><span>📄 ${esc(f.name)}</span><small>${fmtK(f.tokens)} tok</small></span>`).join("");
+    el.innerHTML = (files ? `<div class="files">${files}</div>` : "") + (m.content ? `<div class="bubble">${esc(m.content)}</div>` : "");
+    return el;
+  }
+  let h = "";
+  if (m.thinking) h += `<details class="think"${live && !m.content ? " open" : ""}><summary>${live && !m.content ? "Razonando…" : "Razonamiento"}</summary><div>${esc(m.thinking)}</div></details>`;
+  const body = m.error ? esc(m.content) : m.content ? md(m.content) : (live ? `<span class="status">${esc(m.status || "")}</span>` : "");
+  h += `<div class="body${live ? " cursor" : ""}">${body}</div>`;
+  if (m.stats && !live) {
+    const st = m.stats;
+    h += `<div class="stats"><span>${st.tokens} tok · ${st.tps.toFixed(1)} tok/s</span>${st.ctx ? `<span>contexto ${fmtK(st.ctx)}</span>` : ""}` +
+         (st.dropped ? `<span>se omitieron ${st.dropped} mensajes antiguos</span>` : "") +
+         (st.stopped ? "<span>detenido</span>" : "") + `<button class="copymsg">Copiar</button></div>`;
+  }
+  el.innerHTML = h;
+  return el;
+}
+function renderMsgs() {
+  const box = $("#msgs"); box.innerHTML = "";
+  if (!S.chat.messages.length) {
+    box.innerHTML = `<div class="empty"><h1>¿En qué te ayudo?</h1><div>Qwen 3.5 9B en tu Mac, sin internet. Adjunta archivos con el clip o arrastrándolos.</div></div>`;
+    return;
+  }
+  S.chat.messages.forEach((m, i) => { const el = msgEl(m); el.dataset.i = i; box.appendChild(el); });
+}
+function renderSettings() {
+  const s = settings();
+  $("#ctx").value = String(s.ctx); $("#system").value = s.system; $("#temp").value = s.temperature;
+  $("#temp-v").textContent = Number(s.temperature).toFixed(2); $("#think").checked = s.think; $("#usemem").checked = s.useMemory;
+}
+function renderMeter() {
+  const s = settings(), last = [...S.chat.messages].reverse().find((m) => m.stats);
+  const used = (last?.stats.ctx || 0) + S.pending.reduce((a, f) => a + f.tokens, 0);
+  $("#ctx-used").textContent = fmtK(used);
+  $("#meter").style.width = Math.min(100, (100 * used) / s.ctx) + "%";
+  $("#meter").style.background = used > s.ctx * 0.9 ? "var(--danger)" : "";
+}
+function renderPending() {
+  $("#pending").innerHTML = S.pending.map((f, i) => `<span class="chip" title="${esc(f.name)}"><span>📄 ${esc(f.name)}</span><small>${fmtK(f.tokens)} tok${f.truncated ? " (recortado)" : ""}</small><button data-i="${i}" title="Quitar">×</button></span>`).join("");
+  $("#pending").querySelectorAll("button").forEach((b) => (b.onclick = () => { S.pending.splice(+b.dataset.i, 1); renderPending(); renderMeter(); }));
+  updateSend();
+}
+function renderAll() { $("#title").textContent = S.chat.title || "Nuevo chat"; renderSettings(); renderMsgs(); renderPending(); renderMeter(); renderList(); scrollEnd(true); }
+function scrollEnd(force) { const sc = $("#scroll"); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140) sc.scrollTop = sc.scrollHeight; }
+function updateSend() {
+  const b = $("#send");
+  if (S.busy) { b.disabled = false; b.title = "Detener"; b.innerHTML = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>'; }
+  else { b.disabled = !$("#input").value.trim() && !S.pending.length; b.title = "Enviar (Enter)"; b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'; }
+}
+
+// ---------- conversación ----------
+function systemPrompt() {
+  const s = settings(), parts = [];
+  if (s.system.trim()) parts.push(s.system.trim());
+  if (s.useMemory && S.memory.trim()) parts.push("## Memoria (datos que el usuario quiere que recuerdes)\n" + S.memory.trim());
+  return parts.join("\n\n");
+}
+function apiMessages(extra) {
+  const out = [], sys = systemPrompt();
+  if (sys) out.push({ role: "system", content: sys });
+  for (const m of S.chat.messages) {
+    if (m.error || (m.role === "assistant" && !m.content)) continue;
+    let c = m.content || "";
+    if (m.files?.length) c = m.files.map((f) => `<archivo nombre="${f.name}">\n${f.text}\n</archivo>`).join("\n\n") + (c ? "\n\n" + c : "");
+    out.push({ role: m.role, content: c });
+  }
+  if (extra) out.push(extra);
+  return out;
+}
+async function send() {
+  if (S.busy) { S.ctrl?.abort(); return; }
+  const text = $("#input").value.trim();
+  if (!text && !S.pending.length) return;
+  const c = S.chat, s = settings();
+  c.messages.push({ role: "user", content: text, files: S.pending });
+  const fileTok = S.pending.reduce((a, f) => a + f.tokens, 0);
+  S.pending = []; $("#input").value = ""; autosize(); renderPending();
+  // el M4 lee ~160 tok/s; los turnos siguientes del mismo chat reutilizan lo ya leído
+  const m = { role: "assistant", content: "", thinking: "", status: fileTok > 1500 ? `Leyendo ${fmtK(fileTok)} tokens de archivos (~${Math.ceil(fileTok / 160)} s la primera vez)…` : "Pensando…" };
+  c.messages.push(m);
+  if (!c.title) $("#title").textContent = text.slice(0, 60) || "Chat";
+  renderMsgs(); scrollEnd(true);
+  const live = $("#msgs").lastElementChild;
+  S.busy = true; S.ctrl = new AbortController(); updateSend();
+  const npred = s.ctx >= 16384 ? 4096 : Math.floor(s.ctx / 4);
+  const t0 = performance.now(); let final = null, frame = 0, stopped = false;
+  const paint = () => { frame = 0; const el = msgEl(m, true); live.replaceChildren(...el.childNodes); scrollEnd(); };
+  try {
+    const r = await api("/api/chat", { method: "POST", signal: S.ctrl.signal, body: JSON.stringify({
+      model: "qwen3.5-mtp:9b", messages: apiMessages(), stream: true, think: s.think,
+      options: { temperature: Number(s.temperature), top_p: s.think ? 0.95 : 0.8, top_k: 20, num_ctx: s.ctx, num_predict: npred } }) });
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        const j = JSON.parse(line);
+        if (j.done) { final = j; continue; }
+        if (j.message?.thinking) m.thinking += j.message.thinking;
+        if (j.message?.content) m.content += j.message.content;
+        if (!frame) frame = requestAnimationFrame(paint);
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") stopped = true;
+    else { m.error = true; m.content = "⚠️ " + e.message; }
+  }
+  if (frame) cancelAnimationFrame(frame);
+  delete m.status;
+  const secs = (performance.now() - t0) / 1000;
+  if (!m.error) {
+    const toks = final?.eval_count ?? Math.round((m.content.length + m.thinking.length) / 4);
+    m.stats = { tokens: toks, tps: final ? toks / (final.eval_duration / 1e9) : toks / secs,
+                ctx: final ? final.prompt_eval_count + final.eval_count : 0, dropped: final?.context_dropped || 0, stopped };
+    if (!m.thinking) delete m.thinking;
+  }
+  S.busy = false; S.ctrl = null; updateSend();
+  live.replaceWith(msgEl(m)); renderMeter(); scrollEnd();
+  saveChat().catch((e) => toast("No se pudo guardar el chat: " + e.message));
+}
+
+// ---------- archivos ----------
+async function addFiles(list) {
+  for (const f of list) {
+    try {
+      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(f); });
+      toast(`Leyendo ${f.name}…`);
+      const j = await (await api("/ui/api/upload", { method: "POST", body: JSON.stringify({ name: f.name, data: b64 }) })).json();
+      S.pending.push({ name: j.name, text: j.text, tokens: j.tokens, truncated: j.truncated });
+      if (j.tokens > settings().ctx * 0.8) toast(`${f.name} ocupa ${fmtK(j.tokens)} tokens: sube el contexto para que quepa.`);
+    } catch (e) { toast(e.message); }
+  }
+  renderPending(); renderMeter();
+}
+
+// ---------- memoria ----------
+async function loadMemory() { S.memory = (await (await api("/ui/api/memory")).json()).text || ""; }
+async function saveMemory(text) { S.memory = text; await api("/ui/api/memory", { method: "PUT", body: JSON.stringify({ text }) }); }
+async function summarizeToMemory() {
+  if (S.busy) return toast("Espera a que termine la respuesta.");
+  if (!S.chat.messages.some((m) => m.role === "assistant" && m.content)) return toast("Todavía no hay nada que resumir en este chat.");
+  S.busy = true; updateSend(); toast("Resumiendo este chat para la memoria…");
+  try {
+    const r = await api("/api/chat", { method: "POST", body: JSON.stringify({
+      model: "m", stream: false, think: false, options: { temperature: 0.3, num_ctx: settings().ctx, num_predict: 400 },
+      messages: apiMessages({ role: "user", content: "Resume en 3 a 6 viñetas breves lo importante de esta conversación que convenga recordar en futuras conversaciones: datos sobre mí, decisiones, preferencias y conclusiones. Responde solo con las viñetas." }) }) });
+    const sum = ((await r.json()).message?.content || "").trim();
+    if (!sum) throw new Error("el resumen salió vacío");
+    const date = new Date().toLocaleDateString("es-ES");
+    await saveMemory((S.memory.trim() ? S.memory.trim() + "\n\n" : "") + `### ${S.chat.title || "Chat"} (${date})\n${sum}`);
+    toast("Resumen guardado en la memoria.");
+  } catch (e) { toast("No se pudo resumir: " + e.message); }
+  S.busy = false; updateSend();
+}
+
+// ---------- eventos ----------
+function autosize() { const t = $("#input"); t.style.height = "auto"; t.style.height = Math.min(220, t.scrollHeight) + "px"; updateSend(); }
+$("#input").addEventListener("input", autosize);
+$("#input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!S.busy) send(); } });
+$("#send").onclick = send;
+$("#new").onclick = newChat;
+$("#attach").onclick = () => $("#file").click();
+$("#file").onchange = (e) => { addFiles([...e.target.files]); e.target.value = ""; };
+$("#set-btn").onclick = () => { $("#settings").classList.toggle("open"); $("#set-btn").classList.toggle("on"); };
+$("#menu-btn").onclick = () => $("#side").classList.toggle("open");
+$("#sum-btn").onclick = summarizeToMemory;
+const setS = (k, v) => { S.chat.settings = { ...settings(), [k]: v }; rememberSettings(); renderMeter(); if (S.chat.messages.length) saveChat().catch(() => {}); };
+$("#ctx").onchange = (e) => setS("ctx", +e.target.value);
+$("#temp").oninput = (e) => { $("#temp-v").textContent = Number(e.target.value).toFixed(2); setS("temperature", +e.target.value); };
+$("#think").onchange = (e) => setS("think", e.target.checked);
+$("#usemem").onchange = (e) => setS("useMemory", e.target.checked);
+$("#system").onchange = (e) => setS("system", e.target.value);
+$("#mem-btn").onclick = () => { $("#mem-text").value = S.memory; $("#memory").classList.add("on"); $("#mem-text").focus(); };
+$("#mem-cancel").onclick = () => $("#memory").classList.remove("on");
+$("#mem-save").onclick = async () => { await saveMemory($("#mem-text").value); $("#memory").classList.remove("on"); toast("Memoria guardada."); };
+$("#off-btn").onclick = async () => {
+  if (!confirm("¿Apagar el modelo? Libera la memoria del Mac. Para volver a usarlo, abre «Chat Qwen».")) return;
+  try { await api("/ui/api/shutdown", { method: "POST", body: "{}" }); } catch {}
+  down("Modelo apagado. Ábrelo otra vez con «Chat Qwen» cuando lo necesites.");
+};
+$("#msgs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  let text = "";
+  if (b.classList.contains("copy")) text = b.parentElement.querySelector("code").textContent;
+  else if (b.classList.contains("copymsg")) text = S.chat.messages[+b.closest(".msg").dataset.i]?.content || "";
+  else return;
+  navigator.clipboard.writeText(text).then(() => { b.textContent = "Copiado"; setTimeout(() => (b.textContent = "Copiar"), 1200); });
+});
+let dragN = 0;
+addEventListener("dragenter", (e) => { if (e.dataTransfer?.types.includes("Files")) { dragN++; $("#drop").classList.add("on"); } });
+addEventListener("dragleave", () => { if (--dragN <= 0) { dragN = 0; $("#drop").classList.remove("on"); } });
+addEventListener("dragover", (e) => e.preventDefault());
+addEventListener("drop", (e) => { e.preventDefault(); dragN = 0; $("#drop").classList.remove("on"); if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]); });
+
+(async () => {
+  S.chat = blankChat(); renderAll();
+  try { await Promise.all([loadChats(), loadMemory()]); } catch {}
+  $("#input").focus();
+})();
+</script>
+</body>
+</html>

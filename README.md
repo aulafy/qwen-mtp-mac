@@ -97,6 +97,27 @@ Qué hizo falta para que k=2 gane a k=1:
   verificación de 2 tokens en 58 ms, frente a 56 ms para 1. Sin él, partir la llamada en dos se comía
   la ganancia.
 
+## Chat (interfaz web mínima)
+
+**Doble clic en `Chat Qwen.app`**: si el modelo no está en marcha lo carga (~5 s), y abre
+`http://127.0.0.1:11435/chat` en el navegador. Para tenerlo en el Dock, arrastra la app allí. Si mueves la
+carpeta, vuelve a crear la app con `./crear_app.sh`. Sin la app: `./chat.sh`.
+
+- **Contexto** (arriba): 4K–64K tokens, con un medidor de lo usado. Si se llena, se olvidan los mensajes
+  más antiguos (las instrucciones y la memoria se conservan) y la respuesta lo indica.
+- **Memoria**: notas que se añaden a todos los chats (botón «Memoria», se guarda en `datos/memoria.md` y se
+  puede editar a mano). El botón de la bombilla con + resume el chat actual y lo añade a la memoria.
+- **Conversaciones**: se guardan solas en `datos/chats/*.json` y se retoman desde la barra lateral.
+- **Archivos**: con el clip o arrastrándolos. Admite texto, código, CSV, JSON, PDF con texto y DOCX (hasta
+  25 MB). Se convierten a texto y quedan guardados en el chat. Leerlos va a ~160 tok/s en el M4 (un archivo
+  de 12K tokens tarda ~75 s la primera vez); las preguntas siguientes del mismo chat reutilizan lo leído.
+- **Ajustes por chat**: instrucciones, temperatura, razonar (muestra el razonamiento plegado) y usar o no
+  la memoria. Se puede detener una respuesta a medias.
+- **RAM**: el servidor que arranca la app se cierra solo tras 30 min sin uso (`DS_METAL_IDLE`), o al pulsar
+  «Apagar modelo». Log en `datos/servidor.log`.
+- Solo responde a páginas de 127.0.0.1/localhost: una web cualquiera no puede leer tus chats ni usar el
+  modelo.
+
 ## Servidor local (APIs de Ollama y OpenAI)
 
 ```bash

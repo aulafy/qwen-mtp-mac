@@ -2,21 +2,28 @@
 
   python server.py [--port 11435] [--k 2] [--think]
 
+Chat:    GET /chat (interfaz web: ui/chat.html, datos en datos/)
 Ollama:  GET /  /api/version  /api/tags   POST /api/chat  /api/generate  /api/show
 OpenAI:  GET /v1/models   POST /v1/chat/completions  /v1/completions   (stream o no)
+num_ctx (options.num_ctx en Ollama, num_ctx en OpenAI) recorta los mensajes más antiguos.
 
 Una generación a la vez (la GPU es una); las peticiones concurrentes esperan turno. Solo escucha en
 127.0.0.1. Sin tools/function calling, sin imágenes y sin presence/repeat penalty.
 """
 import argparse
+import base64
 import copy
 import json
 import os
+import threading
 import time
 import uuid
+from pathlib import Path
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import ui_api
 from engine import Sampling, Worker
 
 MODEL = "qwen3.5-mtp:9b"
@@ -26,6 +33,12 @@ THINK_END = "</think>"
 ENGINE = None  # engine.Engine (vive en el hilo de WORKER)
 WORKER: Worker = None
 ARGS = None
+UI_HTML = Path(__file__).parent / "ui" / "chat.html"
+ACTIVITY = {"last": time.time(), "active": 0}  # para --idle-exit
+
+
+class ContextError(ValueError):
+    pass
 
 
 def now_iso():
@@ -109,15 +122,28 @@ def text_of(content):
     return "" if content is None else str(content)
 
 
-def build_chat(messages, think):
+def build_chat(messages, think, num_ctx=0, reserve=0):
+    """Plantilla de chat -> (ids, prefijo reutilizable, mensajes antiguos omitidos).
+    Con num_ctx, quita los mensajes más antiguos (no los system ni el último) hasta que el prompt
+    más `reserve` tokens de respuesta quepan."""
     msgs = [{"role": m.get("role", "user"), "content": text_of(m.get("content"))} for m in messages]
     tok = ENGINE.tok
-    ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=think)
+    dropped = 0
+    while True:
+        ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=think)
+        if not num_ctx or len(ids) + reserve <= num_ctx:
+            break
+        drop = next((i for i, m in enumerate(msgs[:-1]) if m["role"] != "system"), None)
+        if drop is None:
+            raise ContextError(f"El mensaje no cabe en el contexto: {len(ids)} tokens + {reserve} de respuesta "
+                               f"> {num_ctx}. Sube el contexto o quita archivos.")
+        del msgs[drop]
+        dropped += 1
     nogen = tok.apply_chat_template(msgs, add_generation_prompt=False, enable_thinking=think)
     n = 0
     while n < min(len(ids), len(nogen)) and ids[n] == nogen[n]:
         n += 1
-    return ids, n
+    return ids, n, dropped
 
 
 def sampling_from(opts):
@@ -134,6 +160,7 @@ def run(ids, prefix_len, max_tokens, sp, think, stops, on_piece):
     out = TextOut(ENGINE.tok, think, stops)
     t0 = time.perf_counter()
     job = WORKER.submit(ids, prefix_len, max_tokens, sp)
+    ACTIVITY["active"] += 1
     try:
         for tid in job.tokens():
             n += 1
@@ -151,6 +178,8 @@ def run(ids, prefix_len, max_tokens, sp, think, stops, on_piece):
         job.cancel.set()
         for _ in job.tokens():  # espera a que el worker suelte el modelo
             pass
+        ACTIVITY["active"] -= 1
+        ACTIVITY["last"] = time.time()
     t1 = time.perf_counter()
     stats = job.stats
     t_start, t_first = stats.get("t_start", t0), stats.get("t_first", t0)
@@ -179,12 +208,30 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *a)
 
     # ---- utilidades HTTP ----
+    def _origin_ok(self):
+        """Como Ollama: solo orígenes locales (o sin Origin, p. ej. curl y SDKs). Evita que una web
+        cualquiera use el modelo o lea tus chats; el Host evita el DNS rebinding."""
+        host = urlparse("//" + (self.headers.get("Host") or "")).hostname or ""
+        if ARGS.host in ("127.0.0.1", "localhost") and host not in ("127.0.0.1", "localhost", "::1"):
+            return False
+        origin = self.headers.get("Origin")
+        if not origin or origin == "null":
+            return True
+        return (urlparse(origin).hostname or "") in ("127.0.0.1", "localhost", "::1")
+
+    def _cors(self):
+        origin = self.headers.get("Origin")
+        if origin and origin != "null":
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def _send(self, code, body, ctype="application/json"):
         if not isinstance(body, bytes):
             body = (json.dumps(body, ensure_ascii=False) if ctype == "application/json" else body).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self._cors()
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -194,6 +241,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Transfer-Encoding", "chunked")
+        self._cors()
         self.end_headers()
 
     def _chunk(self, data):
@@ -210,12 +258,27 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}")
 
     # ---- rutas ----
+    def do_OPTIONS(self):
+        if not self._origin_ok():
+            return self._send(403, {"error": "origen no permitido"})
+        self.send_response(204)
+        self._cors()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_HEAD(self):
         self.do_GET()
 
     def do_GET(self):
+        if not self._origin_ok():
+            return self._send(403, {"error": "origen no permitido"})
+        ACTIVITY["last"] = time.time()
         if self.path == "/":
             return self._send(200, "Ollama is running", "text/plain; charset=utf-8")
+        if self.path in ("/chat", "/chat/", "/ui"):
+            return self._send(200, UI_HTML.read_bytes(), "text/html; charset=utf-8")
         if self.path == "/api/version":
             return self._send(200, {"version": "0.30.10-ds-metal"})
         if self.path == "/api/tags":
@@ -225,23 +288,85 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/v1/models":
             return self._send(200, {"object": "list", "data": [
                 {"id": MODEL, "object": "model", "created": int(time.time()), "owned_by": "ds-metal"}]})
+        if self.path == "/ui/api/chats":
+            return self._send(200, ui_api.list_chats())
+        if self.path.startswith("/ui/api/chats/"):
+            chat = self._ui(lambda: ui_api.get_chat(self.path.rsplit("/", 1)[1]))
+            if chat is not False:
+                self._send(200, chat) if chat else self._send(404, {"error": "no existe"})
+            return
+        if self.path == "/ui/api/memory":
+            return self._send(200, {"text": ui_api.get_memory()})
+        if self.path == "/ui/api/info":
+            return self._send(200, {"model": MODEL, "k": ARGS.k, "idle_exit_min": ARGS.idle_exit,
+                                    "defaults": DEFAULTS})
+        self._send(404, {"error": f"ruta no encontrada: {self.path}"})
+
+    def _ui(self, fn):
+        try:
+            return fn()
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return False
+
+    def do_PUT(self):
+        if not self._origin_ok():
+            return self._send(403, {"error": "origen no permitido"})
+        body = self._body()
+        if self.path.startswith("/ui/api/chats/"):
+            chat = self._ui(lambda: ui_api.save_chat(self.path.rsplit("/", 1)[1], body))
+            if chat is not False:
+                self._send(200, {"ok": True, "updated": chat["updated"]})
+            return
+        if self.path == "/ui/api/memory":
+            ui_api.set_memory(body.get("text", ""))
+            return self._send(200, {"ok": True})
+        self._send(404, {"error": f"ruta no encontrada: {self.path}"})
+
+    def do_DELETE(self):
+        if not self._origin_ok():
+            return self._send(403, {"error": "origen no permitido"})
+        if self.path.startswith("/ui/api/chats/"):
+            if self._ui(lambda: ui_api.delete_chat(self.path.rsplit("/", 1)[1])) is not False:
+                self._send(200, {"ok": True})
+            return
         self._send(404, {"error": f"ruta no encontrada: {self.path}"})
 
     def do_POST(self):
+        if not self._origin_ok():
+            return self._send(403, {"error": "origen no permitido"})
+        ACTIVITY["last"] = time.time()
         try:
             body = self._body()
         except json.JSONDecodeError:
             return self._send(400, {"error": "JSON inválido"})
         routes = {"/api/chat": self.ollama_chat, "/api/generate": self.ollama_generate,
                   "/api/show": self.ollama_show, "/v1/chat/completions": self.openai_chat,
-                  "/v1/completions": self.openai_completions}
+                  "/v1/completions": self.openai_completions, "/ui/api/upload": self.ui_upload,
+                  "/ui/api/shutdown": self.ui_shutdown}
         fn = routes.get(self.path)
         if fn is None:
             return self._send(404, {"error": f"ruta no encontrada: {self.path}"})
         try:
             fn(body)
+        except ContextError as e:
+            self._send(400, {"error": str(e)})
         except (BrokenPipeError, ConnectionResetError):
             print("cliente desconectado: generación cortada", flush=True)
+
+    def ui_upload(self, body):
+        try:
+            data = base64.b64decode(body.get("data") or "")
+            text, truncated = ui_api.extract_text(body.get("name") or "archivo", data)
+        except ValueError as e:
+            return self._send(400, {"error": f"{body.get('name')}: {e}"})
+        self._send(200, {"name": body.get("name"), "text": text, "truncated": truncated,
+                         "tokens": len(ENGINE.tok.encode(text))})
+
+    def ui_shutdown(self, body):
+        self._send(200, {"ok": True})
+        print("apagado desde la interfaz", flush=True)
+        threading.Timer(0.3, os._exit, (0,)).start()
 
     def _model_card(self):
         return {"name": MODEL, "model": MODEL, "modified_at": now_iso(), "size": 7_000_000_000,
@@ -254,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
                          "model_info": {"general.architecture": "qwen35"}, "capabilities": ["completion", "thinking"]})
 
     # ---- Ollama ----
-    def _ollama(self, body, ids, prefix_len, key):
+    def _ollama(self, body, ids, prefix_len, key, dropped=0):
         opts = body.get("options") or {}
         think = bool(body.get("think", ARGS.think))
         sp = sampling_from(opts)
@@ -287,7 +412,8 @@ class Handler(BaseHTTPRequestHandler):
         final = {"model": MODEL, "created_at": now_iso(), "done": True, "done_reason": finish,
                  "total_duration": ns(st["total_s"]), "load_duration": 0,
                  "prompt_eval_count": st["prompt_tokens"], "prompt_eval_duration": ns(st["prompt_s"]),
-                 "eval_count": st["completion_tokens"], "eval_duration": ns(st["gen_s"])}
+                 "eval_count": st["completion_tokens"], "eval_duration": ns(st["gen_s"]),
+                 "cached_tokens": st.get("cached_tokens", 0), "context_dropped": dropped}
         if stream:
             final.update(msg("content", ""))
             self._chunk(json.dumps(final, ensure_ascii=False) + "\n")
@@ -299,8 +425,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {**final, **full})
 
     def ollama_chat(self, body):
-        ids, n = build_chat(body.get("messages") or [], bool(body.get("think", ARGS.think)))
-        self._ollama(body, ids, n, "message")
+        opts = body.get("options") or {}
+        npred = opts.get("num_predict")
+        reserve = 0 if npred in (None, -1, -2) else int(npred)
+        ids, n, dropped = build_chat(body.get("messages") or [], bool(body.get("think", ARGS.think)),
+                                     int(opts.get("num_ctx") or 0), reserve)
+        self._ollama(body, ids, n, "message", dropped)
 
     def ollama_generate(self, body):
         prompt = body.get("prompt") or ""
@@ -310,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             msgs = ([{"role": "system", "content": body["system"]}] if body.get("system") else []) + \
                    [{"role": "user", "content": prompt}]
-            ids, n = build_chat(msgs, bool(body.get("think", ARGS.think)))
+            ids, n, _ = build_chat(msgs, bool(body.get("think", ARGS.think)))
         self._ollama(body, ids, n, "response")
 
     # ---- OpenAI ----
@@ -376,7 +506,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def openai_chat(self, body):
         think = bool((body.get("chat_template_kwargs") or {}).get("enable_thinking", body.get("think", ARGS.think)))
-        ids, n = build_chat(body.get("messages") or [], think)
+        max_tokens = int(body.get("max_completion_tokens") or body.get("max_tokens") or 0)
+        ids, n, _ = build_chat(body.get("messages") or [], think, int(body.get("num_ctx") or 0), max_tokens)
         self._openai(body, ids, n, chat=True)
 
     def openai_completions(self, body):
@@ -395,14 +526,26 @@ def main():
     ap.add_argument("--lm-head-bits", type=int, default=6)
     ap.add_argument("--think", action="store_true", help="razonamiento activado por defecto")
     ap.add_argument("--greedy", action="store_true", help="temperature 0 si la petición no la indica")
+    ap.add_argument("--idle-exit", type=float, default=0,
+                    help="minutos sin uso tras los que el servidor se cierra y libera la RAM (0 = nunca)")
     ap.add_argument("--verbose", action="store_true")
     ARGS = ap.parse_args()
     t0 = time.time()
     WORKER = Worker(k=ARGS.k, lm_head_bits=ARGS.lm_head_bits)
     ENGINE = WORKER.engine
     print(f"{MODEL} cargado en {time.time() - t0:.1f}s; escuchando en http://{ARGS.host}:{ARGS.port} "
-          f"(Ollama: /api/*, OpenAI: /v1/*)", flush=True)
+          f"(chat: /chat, Ollama: /api/*, OpenAI: /v1/*)", flush=True)
+    if ARGS.idle_exit > 0:
+        threading.Thread(target=_idle_watch, daemon=True).start()
     ThreadingHTTPServer((ARGS.host, ARGS.port), Handler).serve_forever()
+
+
+def _idle_watch():
+    while True:
+        time.sleep(20)
+        if ACTIVITY["active"] == 0 and time.time() - ACTIVITY["last"] > ARGS.idle_exit * 60:
+            print(f"{ARGS.idle_exit:g} min sin uso: me cierro para liberar la memoria", flush=True)
+            os._exit(0)
 
 
 if __name__ == "__main__":
