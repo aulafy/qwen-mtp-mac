@@ -6,7 +6,7 @@ falla sale 1 y se deshace el estado: las capas de atención recortan 1 posición
 GatedDeltaNet recuperan el estado (conv + recurrente) guardado tras el primer token.
 La salida es la misma que el greedy normal (salvo empates numéricos).
 
-Uso: python mtp.py [--k 2] [--lm-head 6] [--mtp-quant nvfp4|8|none] [--max-tokens 256]
+Uso: python mtp.py [--k 2] [--lm-head 2f|6|8] [--mtp-quant nvfp4|8|none] [--max-tokens 256]
 """
 import argparse
 import gc
@@ -282,7 +282,7 @@ PROMPTS = [
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--lm-head", default="6", help="none | 8 | 6 | 4 (bits del lm_head)")
+    ap.add_argument("--lm-head", default="2f", help="2f (dos fases) | none (bf16) | 8 | 6 | 4 (bits)")
     ap.add_argument("--mtp-quant", default="nvfp4", help="none | nvfp4 | 8 | 4")
     ap.add_argument("--draft-vocab", type=int, default=65536, help="0 = usar el lm_head principal")
     ap.add_argument("--draft-bits", default="4")
@@ -300,7 +300,7 @@ def main():
         {"bits": 4, "group_size": 16, "mode": "nvfp4"} if s == "nvfp4" else {"bits": int(s), "group_size": 64})
     if not args.no_qmv:
         qmv_kernel.install()
-    model, tok = qwen_ollama.load(lm_head_quant=bits(args.lm_head))
+    model, tok = qwen_ollama.load(lm_head_quant="2f" if args.lm_head == "2f" else bits(args.lm_head))
     lm = model.language_model
     mtp = load_mtp(lm, bits(args.mtp_quant))
     eos = set(tok.eos_token_ids)

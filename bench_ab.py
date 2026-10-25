@@ -10,10 +10,12 @@ import time
 
 import tuning  # noqa: F401  (antes que mlx)
 import mlx.core as mx
+import mlx.nn as nn
 from mlx_lm import stream_generate
 
 import gdn_fused
 import mtp as M
+from lm_head2 import TwoStageHead
 import qmv_kernel
 import qwen_ollama
 
@@ -40,12 +42,15 @@ def main():
     args = ap.parse_args()
 
     qmv_kernel.install()
-    model, tok = qwen_ollama.load(lm_head_quant=LM_HEAD)
+    model, tok = qwen_ollama.load()  # lm_head bf16: de él salen la copia de 6 bits y el de dos fases
     lm = model.language_model
+    lm_heads = {"6": nn.QuantizedLinear.from_linear(lm.lm_head, **LM_HEAD), "h": TwoStageHead(lm.lm_head.weight)}
+    mx.eval([h.parameters() for h in lm_heads.values()])
+    lm.lm_head = lm_heads["6"]
     mtp = M.load_mtp(lm, MTP_Q)
     eos = set(tok.eos_token_ids)
     # kN = MTP con N borradores y lm_head de borrador reducido (ids frecuentes); kNf = vocabulario completo;
-    # kNg = además la GatedDeltaNet fusionada (gdn_fused.py)
+    # kNg = además la GatedDeltaNet fusionada (gdn_fused.py); kNh = lm_head en dos fases (lm_head2.py)
     heads = {"": M.load_draft_head(args.draft_vocab, DRAFT_HEAD, freq=True, extra_ids=eos),
              "f": M.load_draft_head(248320, DRAFT_HEAD)}
     print(f"mem {mx.get_active_memory()/1e9:.2f} GB")
@@ -60,6 +65,7 @@ def main():
             order = configs if (rnd + i) % 2 == 0 else configs[::-1]
             line = []
             for c in order:
+                lm.lm_head = lm_heads["h" if "h" in c[2:] else "6"]
                 if c == "base":
                     n, dt = run_base(model, tok, ids, args.max_tokens)
                 else:  # kN[f][g]: f = borrador con vocabulario completo, g = GatedDeltaNet fusionada

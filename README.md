@@ -48,7 +48,7 @@ Solo se bajan los ~0,5 GB de la cabeza MTP oficial, con peticiones por rangos (`
 ```bash
 .venv/bin/python fetch_mtp.py          # cabeza MTP (~0,5 GB)
 .venv/bin/python build_draft_vocab.py  # ids frecuentes para el lm_head de borrador (corpus = carpeta padre)
-.venv/bin/python mtp.py                # k=2, lm_head 6 bits, borrador 64k ids a 4 bits
+.venv/bin/python mtp.py                # k=2, lm_head en dos fases, borrador 64k ids a 4 bits
 .venv/bin/python bench_ab.py           # banco intercalado base / k1 / k2
 ```
 
@@ -111,6 +111,14 @@ Qué hizo falta para que k=2 gane a k=1:
   2,9 ms con 3 tokens, pero en la pasada completa no se nota (61,8 frente a 62,2 ms; k2 28,8 frente a
   28,5). Con buffers pequeños, esas operaciones ya no frenan a la GPU. Se activa con
   `gdn_fused.install()`.
+- **Ganó: `lm_head` en dos fases (`lm_head2.py`, por defecto).** Al verificar 3 tokens, el `lm_head` de
+  6 bits costaba 13,2 ms en MLX. Ahora un grueso NVFP4 puntúa todo el vocabulario (6,4 ms con el GEMV
+  multi-fila) y se recalculan con los pesos **bf16 originales** solo los 64 mejores candidatos: 7,4 ms en
+  total. El top-1 del bf16 cae dentro del top-16 del grueso en el 100 % de las posiciones medidas, y su
+  top-20 dentro del top-64. La salida es la del `lm_head` original (con 6 bits coincidía en el 99,2 %):
+  en el mismo camino MTP da los mismos 200 tokens que el bf16 completo en los 4 prompts. Banco
+  intercalado: k=2 **28,6 → 31,4 tok/s (1,65× la base)**. Para muestrear con top_k > 32 usa 4·top_k
+  candidatos (256 si top_k = 0). Cuesta ~1,8 GB más de RAM, porque mantiene el `lm_head` bf16.
 - `lab_gdn.py` separa en las 24 GDN el coste de las proyecciones (~10 ms, lectura de pesos) del tramo
   central (~3–4 ms).
 

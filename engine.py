@@ -20,6 +20,7 @@ from mlx_lm.models.cache import ArraysCache, KVCache
 import mtp as M
 import qmv_kernel
 import qwen_ollama
+from lm_head2 import TwoStageHead, k_for
 
 PREFILL_CHUNK = 2048
 
@@ -34,9 +35,11 @@ class Sampling:
 
 
 class Engine:
-    def __init__(self, k=2, lm_head_bits=6, draft_vocab=65536):
+    def __init__(self, k=2, lm_head="2f", draft_vocab=65536):
+        """lm_head: "2f" (dos fases: grueso NVFP4 + exacto bf16 para los candidatos) o bits (6, 8...)."""
         qmv_kernel.install()
-        self.model, self.tok = qwen_ollama.load(lm_head_quant={"bits": lm_head_bits, "group_size": 64})
+        quant = "2f" if lm_head == "2f" else {"bits": int(lm_head), "group_size": 64}
+        self.model, self.tok = qwen_ollama.load(lm_head_quant=quant)
         self.lm = self.model.language_model
         self.mtp = M.load_mtp(self.lm, {"bits": 4, "group_size": 16, "mode": "nvfp4"})
         self.eos = set(self.tok.eos_token_ids)
@@ -154,6 +157,8 @@ class Engine:
         de generación (punto de la instantánea reutilizable). Solo desde el hilo de Worker."""
         t0 = time.perf_counter()
         stats["t_start"] = t0
+        if isinstance(self.lm.lm_head, TwoStageHead):
+            self.lm.lm_head.k = k_for(sp)
         if sp.seed is not None:
             mx.random.seed(sp.seed)
         reused, last_h = 0, None

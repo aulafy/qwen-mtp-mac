@@ -27,7 +27,8 @@ def _manifest(tag):
 
 
 def load(tag="9b-mlx", lm_head_quant=None):
-    """lm_head_quant: None (bf16 como Ollama) o dict para nn.quantize, p. ej. {"bits": 8, "group_size": 64}."""
+    """lm_head_quant: None (bf16 como Ollama), "2f" (lm_head en dos fases, lm_head2.py) o dict para
+    nn.quantize, p. ej. {"bits": 8, "group_size": 64}."""
     jsons, tensors = _manifest(tag)
     CACHE_DIR.mkdir(exist_ok=True)
     for name, path in jsons.items():
@@ -47,7 +48,11 @@ def load(tag="9b-mlx", lm_head_quant=None):
     weights = model.sanitize(weights)
     nn.quantize(model, **QUANT, class_predicate=lambda p, _: f"{p}.scales" in weights)
     model.load_weights(list(weights.items()), strict=True)
-    if lm_head_quant:
+    if lm_head_quant == "2f":
+        from lm_head2 import TwoStageHead
+
+        model.language_model.lm_head = TwoStageHead(model.language_model.lm_head.weight)
+    elif lm_head_quant:
         nn.quantize(model, **lm_head_quant, class_predicate=lambda p, _: p.endswith("lm_head"))
     mx.eval(model.parameters())
     model.eval()

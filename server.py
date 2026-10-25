@@ -523,7 +523,7 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=int(os.environ.get("DS_METAL_PORT", 11435)))
     ap.add_argument("--k", type=int, default=2, help="borradores MTP por ciclo")
-    ap.add_argument("--lm-head-bits", type=int, default=6)
+    ap.add_argument("--lm-head", default="2f", help="2f (dos fases, por defecto) o bits: 6, 8...")
     ap.add_argument("--think", action="store_true", help="razonamiento activado por defecto")
     ap.add_argument("--greedy", action="store_true", help="temperature 0 si la petición no la indica")
     ap.add_argument("--idle-exit", type=float, default=0,
@@ -531,7 +531,7 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     ARGS = ap.parse_args()
     t0 = time.time()
-    WORKER = Worker(k=ARGS.k, lm_head_bits=ARGS.lm_head_bits)
+    WORKER = Worker(k=ARGS.k, lm_head=ARGS.lm_head)
     ENGINE = WORKER.engine
     print(f"{MODEL} cargado en {time.time() - t0:.1f}s; escuchando en http://{ARGS.host}:{ARGS.port} "
           f"(chat: /chat, Ollama: /api/*, OpenAI: /v1/*)", flush=True)
