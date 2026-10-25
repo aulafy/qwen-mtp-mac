@@ -25,9 +25,25 @@ TEXT_EXTS = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".xm
              ".tex", ".srt", ".vtt", ".swift", ".r", ".m", ".lua", ".pl", ".env", ".conf"}
 
 
+MSG = {
+    "es": {"too_big": "archivo demasiado grande ({mb:.0f} MB, máx {max} MB)",
+           "pdf": "no se pudo leer el PDF ({e})", "pdf_empty": "el PDF no tiene texto extraíble (¿escaneado?)",
+           "docx": "no se pudo leer el DOCX ({e})",
+           "format": "formato no soportado: {ext} (texto, código, CSV, PDF o DOCX)"},
+    "en": {"too_big": "file too large ({mb:.0f} MB, max {max} MB)",
+           "pdf": "could not read the PDF ({e})", "pdf_empty": "the PDF has no extractable text (scanned?)",
+           "docx": "could not read the DOCX ({e})",
+           "format": "unsupported format: {ext} (text, code, CSV, PDF or DOCX)"},
+}
+
+
+def _msg(lang, key, **kw):
+    return MSG.get(lang, MSG["en"])[key].format(**kw)
+
+
 def _path(cid):
     if not ID_RE.match(cid or ""):
-        raise ValueError("id de conversación inválido")
+        raise ValueError("invalid chat id")
     return CHATS / f"{cid}.json"
 
 
@@ -91,29 +107,29 @@ def _pdf_text(data):
     return "\n\n".join(f"[página {i + 1}]\n{t}" for i, t in enumerate(pages) if t)
 
 
-def extract_text(name, data):
-    """Texto de un archivo subido. Lanza ValueError si el formato no se puede leer."""
+def extract_text(name, data, lang="en"):
+    """Texto de un archivo subido. Lanza ValueError (mensaje en `lang`: es/en) si no se puede leer."""
     if len(data) > MAX_FILE_BYTES:
-        raise ValueError(f"archivo demasiado grande ({len(data) / 1e6:.0f} MB, máx {MAX_FILE_BYTES // 2**20} MB)")
+        raise ValueError(_msg(lang, "too_big", mb=len(data) / 1e6, max=MAX_FILE_BYTES // 2**20))
     ext = Path(name).suffix.lower()
     if ext == ".pdf":
         try:
             text = _pdf_text(data)
         except Exception as e:  # noqa: BLE001 - pypdf lanza muchos tipos distintos
-            raise ValueError(f"no se pudo leer el PDF ({e})") from e
+            raise ValueError(_msg(lang, "pdf", e=e)) from e
         if not text.strip():
-            raise ValueError("el PDF no tiene texto extraíble (¿escaneado?)")
+            raise ValueError(_msg(lang, "pdf_empty"))
     elif ext == ".docx":
         try:
             text = _docx_text(data)
         except (zipfile.BadZipFile, KeyError) as e:
-            raise ValueError(f"no se pudo leer el DOCX ({e})") from e
+            raise ValueError(_msg(lang, "docx", e=e)) from e
     elif ext in TEXT_EXTS or b"\x00" not in data[:4096]:
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             text = data.decode("latin-1")
     else:
-        raise ValueError(f"formato no soportado: {ext or 'binario'} (texto, código, CSV, PDF o DOCX)")
+        raise ValueError(_msg(lang, "format", ext=ext or "binary"))
     truncated = len(text) > MAX_TEXT_CHARS
     return text[:MAX_TEXT_CHARS], truncated

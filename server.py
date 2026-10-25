@@ -122,7 +122,14 @@ def text_of(content):
     return "" if content is None else str(content)
 
 
-def build_chat(messages, think, num_ctx=0, reserve=0):
+CTX_MSG = {
+    "es": "El mensaje no cabe en el contexto: {n} tokens + {r} de respuesta > {c}. Sube el contexto o quita archivos.",
+    "en": "The message does not fit in the context: {n} tokens + {r} for the answer > {c}. "
+          "Raise the context or remove files.",
+}
+
+
+def build_chat(messages, think, num_ctx=0, reserve=0, lang="en"):
     """Plantilla de chat -> (ids, prefijo reutilizable, mensajes antiguos omitidos).
     Con num_ctx, quita los mensajes más antiguos (no los system ni el último) hasta que el prompt
     más `reserve` tokens de respuesta quepan."""
@@ -135,8 +142,7 @@ def build_chat(messages, think, num_ctx=0, reserve=0):
             break
         drop = next((i for i, m in enumerate(msgs[:-1]) if m["role"] != "system"), None)
         if drop is None:
-            raise ContextError(f"El mensaje no cabe en el contexto: {len(ids)} tokens + {reserve} de respuesta "
-                               f"> {num_ctx}. Sube el contexto o quita archivos.")
+            raise ContextError(CTX_MSG.get(lang, CTX_MSG["en"]).format(n=len(ids), r=reserve, c=num_ctx))
         del msgs[drop]
         dropped += 1
     nogen = tok.apply_chat_template(msgs, add_generation_prompt=False, enable_thinking=think)
@@ -219,6 +225,11 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return (urlparse(origin).hostname or "") in ("127.0.0.1", "localhost", "::1")
 
+    def _lang(self, body=None):
+        """Idioma de los mensajes de error para la interfaz (es/en); inglés para el resto de clientes."""
+        lang = (body or {}).get("lang") or self.headers.get("X-Lang") or "en"
+        return lang if lang in ("es", "en") else "en"
+
     def _cors(self):
         origin = self.headers.get("Origin")
         if origin and origin != "null":
@@ -260,11 +271,11 @@ class Handler(BaseHTTPRequestHandler):
     # ---- rutas ----
     def do_OPTIONS(self):
         if not self._origin_ok():
-            return self._send(403, {"error": "origen no permitido"})
+            return self._send(403, {"error": "origin not allowed"})
         self.send_response(204)
         self._cors()
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Lang")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -273,7 +284,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self._origin_ok():
-            return self._send(403, {"error": "origen no permitido"})
+            return self._send(403, {"error": "origin not allowed"})
         ACTIVITY["last"] = time.time()
         if self.path == "/":
             return self._send(200, "Ollama is running", "text/plain; charset=utf-8")
@@ -293,14 +304,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/ui/api/chats/"):
             chat = self._ui(lambda: ui_api.get_chat(self.path.rsplit("/", 1)[1]))
             if chat is not False:
-                self._send(200, chat) if chat else self._send(404, {"error": "no existe"})
+                self._send(200, chat) if chat else self._send(404, {"error": "not found"})
             return
         if self.path == "/ui/api/memory":
             return self._send(200, {"text": ui_api.get_memory()})
         if self.path == "/ui/api/info":
             return self._send(200, {"model": MODEL, "k": ARGS.k, "idle_exit_min": ARGS.idle_exit,
                                     "defaults": DEFAULTS})
-        self._send(404, {"error": f"ruta no encontrada: {self.path}"})
+        self._send(404, {"error": f"not found: {self.path}"})
 
     def _ui(self, fn):
         try:
@@ -311,7 +322,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         if not self._origin_ok():
-            return self._send(403, {"error": "origen no permitido"})
+            return self._send(403, {"error": "origin not allowed"})
         body = self._body()
         if self.path.startswith("/ui/api/chats/"):
             chat = self._ui(lambda: ui_api.save_chat(self.path.rsplit("/", 1)[1], body))
@@ -321,32 +332,32 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/ui/api/memory":
             ui_api.set_memory(body.get("text", ""))
             return self._send(200, {"ok": True})
-        self._send(404, {"error": f"ruta no encontrada: {self.path}"})
+        self._send(404, {"error": f"not found: {self.path}"})
 
     def do_DELETE(self):
         if not self._origin_ok():
-            return self._send(403, {"error": "origen no permitido"})
+            return self._send(403, {"error": "origin not allowed"})
         if self.path.startswith("/ui/api/chats/"):
             if self._ui(lambda: ui_api.delete_chat(self.path.rsplit("/", 1)[1])) is not False:
                 self._send(200, {"ok": True})
             return
-        self._send(404, {"error": f"ruta no encontrada: {self.path}"})
+        self._send(404, {"error": f"not found: {self.path}"})
 
     def do_POST(self):
         if not self._origin_ok():
-            return self._send(403, {"error": "origen no permitido"})
+            return self._send(403, {"error": "origin not allowed"})
         ACTIVITY["last"] = time.time()
         try:
             body = self._body()
         except json.JSONDecodeError:
-            return self._send(400, {"error": "JSON inválido"})
+            return self._send(400, {"error": "invalid JSON"})
         routes = {"/api/chat": self.ollama_chat, "/api/generate": self.ollama_generate,
                   "/api/show": self.ollama_show, "/v1/chat/completions": self.openai_chat,
                   "/v1/completions": self.openai_completions, "/ui/api/upload": self.ui_upload,
                   "/ui/api/shutdown": self.ui_shutdown}
         fn = routes.get(self.path)
         if fn is None:
-            return self._send(404, {"error": f"ruta no encontrada: {self.path}"})
+            return self._send(404, {"error": f"not found: {self.path}"})
         try:
             fn(body)
         except ContextError as e:
@@ -357,7 +368,7 @@ class Handler(BaseHTTPRequestHandler):
     def ui_upload(self, body):
         try:
             data = base64.b64decode(body.get("data") or "")
-            text, truncated = ui_api.extract_text(body.get("name") or "archivo", data)
+            text, truncated = ui_api.extract_text(body.get("name") or "file", data, self._lang(body))
         except ValueError as e:
             return self._send(400, {"error": f"{body.get('name')}: {e}"})
         self._send(200, {"name": body.get("name"), "text": text, "truncated": truncated,
@@ -429,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
         npred = opts.get("num_predict")
         reserve = 0 if npred in (None, -1, -2) else int(npred)
         ids, n, dropped = build_chat(body.get("messages") or [], bool(body.get("think", ARGS.think)),
-                                     int(opts.get("num_ctx") or 0), reserve)
+                                     int(opts.get("num_ctx") or 0), reserve, self._lang(body))
         self._ollama(body, ids, n, "message", dropped)
 
     def ollama_generate(self, body):
@@ -507,7 +518,8 @@ class Handler(BaseHTTPRequestHandler):
     def openai_chat(self, body):
         think = bool((body.get("chat_template_kwargs") or {}).get("enable_thinking", body.get("think", ARGS.think)))
         max_tokens = int(body.get("max_completion_tokens") or body.get("max_tokens") or 0)
-        ids, n, _ = build_chat(body.get("messages") or [], think, int(body.get("num_ctx") or 0), max_tokens)
+        ids, n, _ = build_chat(body.get("messages") or [], think, int(body.get("num_ctx") or 0), max_tokens,
+                               self._lang(body))
         self._openai(body, ids, n, chat=True)
 
     def openai_completions(self, body):

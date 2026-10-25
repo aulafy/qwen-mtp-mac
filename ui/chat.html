@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chat Qwen local</title>
+<title>Qwen chat</title>
 <style>
 :root {
   --bg: #f7f7f5; --panel: #ffffff; --side: #efefec; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e2dd;
@@ -42,6 +42,9 @@ svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width:
 .chat-item .del:hover { color: var(--danger); }
 .group { font-size: 12px; color: var(--muted); padding: 12px 10px 4px; }
 #side .bottom { padding: 8px 12px 12px; border-top: 1px solid var(--line); font-size: 14px; }
+.lang { display: flex; gap: 2px; margin: 6px 10px 0; padding: 2px; border: 1px solid var(--line); border-radius: 8px; width: fit-content; background: var(--panel); }
+.lang button { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 6px; color: var(--muted); }
+.lang button.on { background: var(--accent); color: var(--accent-ink); }
 
 /* principal */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -144,12 +147,13 @@ details.think div { white-space: pre-wrap; margin-top: 6px; max-height: 320px; o
 <aside id="side">
   <div class="top">
     <div class="brand"><span class="dot"></span>Qwen 3.5 9B · local</div>
-    <button class="btn primary" id="new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nuevo chat</button>
+    <button class="btn primary" id="new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="new_chat"></span></button>
   </div>
   <div id="chats"></div>
   <div class="bottom">
-    <button class="btn" id="mem-btn"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3z"/><path d="M9 22h6"/></svg>Memoria</button>
-    <button class="btn" id="off-btn" title="Libera ~9 GB de RAM"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg>Apagar modelo</button>
+    <button class="btn" id="mem-btn"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3z"/><path d="M9 22h6"/></svg><span data-i18n="memory"></span></button>
+    <button class="btn" id="off-btn" data-i18n-title="off_title"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg><span data-i18n="off"></span></button>
+    <div class="lang" role="group" aria-label="Language"><button data-lang="es">ES</button><button data-lang="en">EN</button></div>
   </div>
 </aside>
 
@@ -157,9 +161,9 @@ details.think div { white-space: pre-wrap; margin-top: 6px; max-height: 320px; o
   <div id="banner"></div>
   <header>
     <button class="iconbtn" id="menu-btn" title="Chats"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-    <div id="title">Nuevo chat</div>
-    <div class="pill" title="Tokens de la conversación que el modelo tiene en cuenta. Si se llena, se olvidan los mensajes más antiguos.">
-      <span id="ctx-label">Contexto</span>
+    <div id="title"></div>
+    <div class="pill" data-i18n-title="ctx_title">
+      <span id="ctx-label" data-i18n="ctx_label"></span>
       <div class="meter"><i id="meter"></i></div>
       <span id="ctx-used">0</span>
       <select id="ctx">
@@ -167,43 +171,128 @@ details.think div { white-space: pre-wrap; margin-top: 6px; max-height: 320px; o
         <option value="32768">32K</option><option value="65536">64K</option>
       </select>
     </div>
-    <button class="iconbtn" id="sum-btn" title="Guardar un resumen de este chat en la memoria"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button>
-    <button class="iconbtn" id="set-btn" title="Ajustes de este chat"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+    <button class="iconbtn" id="sum-btn" data-i18n-title="sum_title"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button>
+    <button class="iconbtn" id="set-btn" data-i18n-title="set_title"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
   </header>
   <div id="settings">
-    <label>Instrucciones para este chat
-      <textarea id="system" placeholder="Ej.: Responde siempre en español, de forma breve y con ejemplos."></textarea>
+    <label><span data-i18n="instructions"></span>
+      <textarea id="system" data-i18n-ph="instructions_ph"></textarea>
     </label>
     <div style="display:flex;flex-direction:column;gap:12px">
-      <label>Temperatura <span><input type="range" id="temp" min="0" max="1.5" step="0.05"> <b id="temp-v"></b></span></label>
-      <label class="row"><input type="checkbox" id="think"> Razonar antes de responder (más lento)</label>
-      <label class="row"><input type="checkbox" id="usemem"> Usar la memoria en este chat</label>
+      <label><span data-i18n="temperature"></span> <span><input type="range" id="temp" min="0" max="1.5" step="0.05"> <b id="temp-v"></b></span></label>
+      <label class="row"><input type="checkbox" id="think"> <span data-i18n="think"></span></label>
+      <label class="row"><input type="checkbox" id="usemem"> <span data-i18n="usemem"></span></label>
     </div>
   </div>
   <div id="scroll"><div id="msgs"></div></div>
   <div id="composer">
     <div id="pending"></div>
     <div class="box">
-      <button class="iconbtn" id="attach" title="Adjuntar archivos (texto, código, CSV, PDF, DOCX)"><svg viewBox="0 0 24 24"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg></button>
-      <textarea id="input" rows="1" placeholder="Escribe un mensaje…"></textarea>
-      <button id="send" title="Enviar (Enter)"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+      <button class="iconbtn" id="attach" data-i18n-title="attach_title"><svg viewBox="0 0 24 24"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg></button>
+      <textarea id="input" rows="1" data-i18n-ph="input_ph"></textarea>
+      <button id="send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </div>
-    <div class="hint">Enter envía · Shift+Enter salto de línea · arrastra archivos aquí · todo se queda en este Mac</div>
+    <div class="hint" data-i18n="hint"></div>
     <input type="file" id="file" multiple hidden>
   </div>
 </main>
 
 <div id="memory"><div class="card">
-  <h2>Memoria</h2>
-  <p>Lo que escribas aquí se incluye en todos los chats que tengan la memoria activada. El botón de la bombilla con + en cada chat añade un resumen automático.</p>
-  <textarea id="mem-text" placeholder="- Me llamo …&#10;- Trabajo en …&#10;- Prefiero respuestas cortas"></textarea>
-  <div class="actions"><button class="ghost" id="mem-cancel">Cerrar</button><button class="solid" id="mem-save">Guardar</button></div>
+  <h2 data-i18n="memory"></h2>
+  <p data-i18n="mem_desc"></p>
+  <textarea id="mem-text" data-i18n-ph="mem_ph"></textarea>
+  <div class="actions"><button class="ghost" id="mem-cancel" data-i18n="close"></button><button class="solid" id="mem-save" data-i18n="save"></button></div>
 </div></div>
-<div id="drop">Suelta los archivos para adjuntarlos</div>
+<div id="drop" data-i18n="drop"></div>
 <div id="toast"></div>
 
 <script>
 const $ = (s) => document.querySelector(s);
+
+// ---------- idioma (ES/EN) ----------
+const I18N = {
+  es: {
+    new_chat: "Nuevo chat", memory: "Memoria", off: "Apagar modelo", off_title: "Libera ~9 GB de RAM",
+    ctx_label: "Contexto", ctx_title: "Tokens de la conversación que el modelo tiene en cuenta. Si se llena, se olvidan los mensajes más antiguos.",
+    sum_title: "Guardar un resumen de este chat en la memoria", set_title: "Ajustes de este chat",
+    instructions: "Instrucciones para este chat", instructions_ph: "Ej.: Responde siempre en español, de forma breve y con ejemplos.",
+    temperature: "Temperatura", think: "Razonar antes de responder (más lento)", usemem: "Usar la memoria en este chat",
+    attach_title: "Adjuntar archivos (texto, código, CSV, PDF, DOCX)", input_ph: "Escribe un mensaje…",
+    send: "Enviar (Enter)", stop: "Detener",
+    hint: "Enter envía · Shift+Enter salto de línea · arrastra archivos aquí · todo se queda en este Mac",
+    mem_desc: "Lo que escribas aquí se incluye en todos los chats que tengan la memoria activada. El botón de la bombilla con + en cada chat añade un resumen automático.",
+    mem_ph: "- Me llamo …\n- Trabajo en …\n- Prefiero respuestas cortas", close: "Cerrar", save: "Guardar",
+    drop: "Suelta los archivos para adjuntarlos",
+    not_running: "El modelo no está en marcha. Ábrelo otra vez con «Chat Qwen» (o .venv/bin/python server.py).",
+    copy: "Copiar", copied: "Copiado", wait_or_stop: "Espera a que termine la respuesta (o detenla).",
+    wait: "Espera a que termine la respuesta.", confirm_delete: "¿Borrar este chat? No se puede deshacer.",
+    today: "Hoy", last7: "Últimos 7 días", older: "Anteriores", delete: "Borrar",
+    reasoning_live: "Razonando…", reasoning: "Razonamiento", ctx_stat: "contexto {n}",
+    dropped: "se omitieron {n} mensajes antiguos", stopped: "detenido",
+    empty_h: "¿En qué te ayudo?", empty_p: "Qwen 3.5 9B en tu Mac, sin internet. Adjunta archivos con el clip o arrastrándolos.",
+    truncated: "(recortado)", remove: "Quitar",
+    mem_header: "## Memoria (datos que el usuario quiere que recuerdes)", file_tag: "archivo", file_attr: "nombre",
+    reading_files: "Leyendo {n} tokens de archivos (~{s} s la primera vez)…", thinking: "Pensando…",
+    save_failed: "No se pudo guardar el chat: ", reading_file: "Leyendo {name}…",
+    file_too_big: "{name} ocupa {n} tokens: sube el contexto para que quepa.",
+    nothing_to_sum: "Todavía no hay nada que resumir en este chat.", summarizing: "Resumiendo este chat para la memoria…",
+    sum_prompt: "Resume en 3 a 6 viñetas breves lo importante de esta conversación que convenga recordar en futuras conversaciones: datos sobre mí, decisiones, preferencias y conclusiones. Responde solo con las viñetas.",
+    sum_empty: "el resumen salió vacío", sum_saved: "Resumen guardado en la memoria.", sum_failed: "No se pudo resumir: ",
+    mem_saved: "Memoria guardada.",
+    confirm_off: "¿Apagar el modelo? Libera la memoria del Mac. Para volver a usarlo, abre «Chat Qwen».",
+    off_banner: "Modelo apagado. Ábrelo otra vez con «Chat Qwen» cuando lo necesites.", locale: "es-ES",
+  },
+  en: {
+    new_chat: "New chat", memory: "Memory", off: "Shut down model", off_title: "Frees ~9 GB of RAM",
+    ctx_label: "Context", ctx_title: "Conversation tokens the model takes into account. When it fills up, the oldest messages are forgotten.",
+    sum_title: "Save a summary of this chat to memory", set_title: "Chat settings",
+    instructions: "Instructions for this chat", instructions_ph: "E.g. Always answer briefly and with examples.",
+    temperature: "Temperature", think: "Think before answering (slower)", usemem: "Use memory in this chat",
+    attach_title: "Attach files (text, code, CSV, PDF, DOCX)", input_ph: "Type a message…",
+    send: "Send (Enter)", stop: "Stop",
+    hint: "Enter sends · Shift+Enter new line · drop files here · everything stays on this Mac",
+    mem_desc: "Whatever you write here is included in every chat with memory turned on. The light-bulb + button in each chat adds an automatic summary.",
+    mem_ph: "- My name is …\n- I work at …\n- I prefer short answers", close: "Close", save: "Save",
+    drop: "Drop the files to attach them",
+    not_running: "The model is not running. Open it again with “Chat Qwen” (or .venv/bin/python server.py).",
+    copy: "Copy", copied: "Copied", wait_or_stop: "Wait for the answer to finish (or stop it).",
+    wait: "Wait for the answer to finish.", confirm_delete: "Delete this chat? This cannot be undone.",
+    today: "Today", last7: "Last 7 days", older: "Older", delete: "Delete",
+    reasoning_live: "Reasoning…", reasoning: "Reasoning", ctx_stat: "context {n}",
+    dropped: "{n} older messages left out", stopped: "stopped",
+    empty_h: "How can I help?", empty_p: "Qwen 3.5 9B on your Mac, offline. Attach files with the clip or by dragging them in.",
+    truncated: "(truncated)", remove: "Remove",
+    mem_header: "## Memory (facts the user wants you to remember)", file_tag: "file", file_attr: "name",
+    reading_files: "Reading {n} tokens of files (~{s} s the first time)…", thinking: "Thinking…",
+    save_failed: "Could not save the chat: ", reading_file: "Reading {name}…",
+    file_too_big: "{name} takes {n} tokens: raise the context so it fits.",
+    nothing_to_sum: "There is nothing to summarize in this chat yet.", summarizing: "Summarizing this chat into memory…",
+    sum_prompt: "Summarize in 3 to 6 short bullet points what is worth remembering from this conversation for future conversations: facts about me, decisions, preferences and conclusions. Reply only with the bullet points.",
+    sum_empty: "the summary came out empty", sum_saved: "Summary saved to memory.", sum_failed: "Could not summarize: ",
+    mem_saved: "Memory saved.",
+    confirm_off: "Shut down the model? This frees the Mac's memory. To use it again, open “Chat Qwen”.",
+    off_banner: "Model shut down. Open “Chat Qwen” again when you need it.", locale: "en-US",
+  },
+};
+function initialLang() {
+  try { const l = localStorage.getItem("qwen-lang"); if (l in I18N) return l; } catch {}
+  return (navigator.language || "en").toLowerCase().startsWith("es") ? "es" : "en";
+}
+let LANG = initialLang();
+const t = (key, vars = {}) => (I18N[LANG][key] ?? I18N.en[key] ?? key).replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+function applyLang() {
+  document.documentElement.lang = LANG;
+  document.querySelectorAll("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => (el.title = t(el.dataset.i18nTitle)));
+  document.querySelectorAll("[data-i18n-ph]").forEach((el) => (el.placeholder = t(el.dataset.i18nPh)));
+  document.querySelectorAll(".lang button").forEach((b) => b.classList.toggle("on", b.dataset.lang === LANG));
+}
+function setLang(l) {
+  LANG = l;
+  try { localStorage.setItem("qwen-lang", l); } catch {}
+  applyLang();
+  if (S.chat) renderAll();
+}
 const DEFAULT_SETTINGS = { ctx: 16384, temperature: 0.7, think: false, system: "", useMemory: true };
 const S = { chats: [], chat: null, pending: [], busy: false, ctrl: null, memory: "" };
 
@@ -217,8 +306,8 @@ function down(msg) { const b = $("#banner"); b.textContent = msg; b.classList.ad
 
 async function api(path, opts = {}) {
   let r;
-  try { r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts }); }
-  catch (e) { if (e.name !== "AbortError") down("El modelo no está en marcha. Ábrelo otra vez con «Chat Qwen» (o .venv/bin/python server.py)."); throw e; }
+  try { r = await fetch(path, { headers: { "Content-Type": "application/json", "X-Lang": LANG }, ...opts }); }
+  catch (e) { if (e.name !== "AbortError") down(t("not_running")); throw e; }
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
   return r;
 }
@@ -268,7 +357,7 @@ function md(src) {
   return src.split("```").map((p, i) => {
     if (i % 2 === 0) return blocks(p);
     const nl = p.indexOf("\n"); const code = nl >= 0 ? p.slice(nl + 1) : p;
-    return `<div class="code"><button class="copy">Copiar</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`;
+    return `<div class="code"><button class="copy">${t("copy")}</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`;
   }).join("");
 }
 
@@ -282,20 +371,21 @@ function rememberSettings() { try { localStorage.setItem("ds-settings", JSON.str
 
 async function loadChats() { S.chats = await (await api("/ui/api/chats")).json(); renderList(); }
 async function openChat(id) {
-  if (S.busy) return toast("Espera a que termine la respuesta (o detenla).");
+  if (S.busy) return toast(t("wait_or_stop"));
   S.chat = await (await api("/ui/api/chats/" + id)).json();
   S.pending = []; renderAll(); $("#side").classList.remove("open");
 }
-function newChat() { if (S.busy) return toast("Espera a que termine la respuesta."); S.chat = blankChat(); S.pending = []; renderAll(); $("#input").focus(); $("#side").classList.remove("open"); }
+function newChat() { if (S.busy) return toast(t("wait")); S.chat = blankChat(); S.pending = []; renderAll(); $("#input").focus(); $("#side").classList.remove("open"); }
 async function saveChat() {
   const c = S.chat; if (!c || !c.messages.length) return;
   if (!c.title) { const u = c.messages.find((m) => m.role === "user"); c.title = ((u?.content || u?.files?.[0]?.name || "Chat").replace(/\s+/g, " ").trim()).slice(0, 60); }
+  if (S.chat === c) $("#title").textContent = c.title;
   await api("/ui/api/chats/" + c.id, { method: "PUT", body: JSON.stringify(c) });
   loadChats();
 }
 async function deleteChat(id, ev) {
   ev.stopPropagation();
-  if (!confirm("¿Borrar este chat? No se puede deshacer.")) return;
+  if (!confirm(t("confirm_delete"))) return;
   await api("/ui/api/chats/" + id, { method: "DELETE" });
   if (S.chat?.id === id) newChat();
   loadChats();
@@ -306,11 +396,11 @@ function renderList() {
   const box = $("#chats"); box.innerHTML = "";
   const now = Date.now() / 1000; let last = "";
   for (const c of S.chats) {
-    const age = now - c.updated, g = age < 86400 ? "Hoy" : age < 7 * 86400 ? "Últimos 7 días" : "Anteriores";
+    const age = now - c.updated, g = age < 86400 ? t("today") : age < 7 * 86400 ? t("last7") : t("older");
     if (g !== last) { box.insertAdjacentHTML("beforeend", `<div class="group">${g}</div>`); last = g; }
     const el = document.createElement("div");
     el.className = "chat-item" + (S.chat?.id === c.id ? " active" : "");
-    el.innerHTML = `<span class="t">${esc(c.title)}</span><button class="del" title="Borrar"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>`;
+    el.innerHTML = `<span class="t">${esc(c.title)}</span><button class="del" title="${t("delete")}"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>`;
     el.onclick = () => openChat(c.id);
     el.querySelector(".del").onclick = (e) => deleteChat(c.id, e);
     box.appendChild(el);
@@ -325,14 +415,14 @@ function msgEl(m, live = false) {
     return el;
   }
   let h = "";
-  if (m.thinking) h += `<details class="think"${live && !m.content ? " open" : ""}><summary>${live && !m.content ? "Razonando…" : "Razonamiento"}</summary><div>${esc(m.thinking)}</div></details>`;
+  if (m.thinking) h += `<details class="think"${live && !m.content ? " open" : ""}><summary>${live && !m.content ? t("reasoning_live") : t("reasoning")}</summary><div>${esc(m.thinking)}</div></details>`;
   const body = m.error ? esc(m.content) : m.content ? md(m.content) : (live ? `<span class="status">${esc(m.status || "")}</span>` : "");
   h += `<div class="body${live ? " cursor" : ""}">${body}</div>`;
   if (m.stats && !live) {
     const st = m.stats;
-    h += `<div class="stats"><span>${st.tokens} tok · ${st.tps.toFixed(1)} tok/s</span>${st.ctx ? `<span>contexto ${fmtK(st.ctx)}</span>` : ""}` +
-         (st.dropped ? `<span>se omitieron ${st.dropped} mensajes antiguos</span>` : "") +
-         (st.stopped ? "<span>detenido</span>" : "") + `<button class="copymsg">Copiar</button></div>`;
+    h += `<div class="stats"><span>${st.tokens} tok · ${st.tps.toFixed(1)} tok/s</span>${st.ctx ? `<span>${t("ctx_stat", { n: fmtK(st.ctx) })}</span>` : ""}` +
+         (st.dropped ? `<span>${t("dropped", { n: st.dropped })}</span>` : "") +
+         (st.stopped ? `<span>${t("stopped")}</span>` : "") + `<button class="copymsg">${t("copy")}</button></div>`;
   }
   el.innerHTML = h;
   return el;
@@ -340,7 +430,7 @@ function msgEl(m, live = false) {
 function renderMsgs() {
   const box = $("#msgs"); box.innerHTML = "";
   if (!S.chat.messages.length) {
-    box.innerHTML = `<div class="empty"><h1>¿En qué te ayudo?</h1><div>Qwen 3.5 9B en tu Mac, sin internet. Adjunta archivos con el clip o arrastrándolos.</div></div>`;
+    box.innerHTML = `<div class="empty"><h1>${t("empty_h")}</h1><div>${t("empty_p")}</div></div>`;
     return;
   }
   S.chat.messages.forEach((m, i) => { const el = msgEl(m); el.dataset.i = i; box.appendChild(el); });
@@ -358,23 +448,23 @@ function renderMeter() {
   $("#meter").style.background = used > s.ctx * 0.9 ? "var(--danger)" : "";
 }
 function renderPending() {
-  $("#pending").innerHTML = S.pending.map((f, i) => `<span class="chip" title="${esc(f.name)}"><span>📄 ${esc(f.name)}</span><small>${fmtK(f.tokens)} tok${f.truncated ? " (recortado)" : ""}</small><button data-i="${i}" title="Quitar">×</button></span>`).join("");
+  $("#pending").innerHTML = S.pending.map((f, i) => `<span class="chip" title="${esc(f.name)}"><span>📄 ${esc(f.name)}</span><small>${fmtK(f.tokens)} tok${f.truncated ? " " + t("truncated") : ""}</small><button data-i="${i}" title="${t("remove")}">×</button></span>`).join("");
   $("#pending").querySelectorAll("button").forEach((b) => (b.onclick = () => { S.pending.splice(+b.dataset.i, 1); renderPending(); renderMeter(); }));
   updateSend();
 }
-function renderAll() { $("#title").textContent = S.chat.title || "Nuevo chat"; renderSettings(); renderMsgs(); renderPending(); renderMeter(); renderList(); scrollEnd(true); }
+function renderAll() { $("#title").textContent = S.chat.title || t("new_chat"); renderSettings(); renderMsgs(); renderPending(); renderMeter(); renderList(); scrollEnd(true); }
 function scrollEnd(force) { const sc = $("#scroll"); if (force || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140) sc.scrollTop = sc.scrollHeight; }
 function updateSend() {
   const b = $("#send");
-  if (S.busy) { b.disabled = false; b.title = "Detener"; b.innerHTML = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>'; }
-  else { b.disabled = !$("#input").value.trim() && !S.pending.length; b.title = "Enviar (Enter)"; b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'; }
+  if (S.busy) { b.disabled = false; b.title = t("stop"); b.innerHTML = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>'; }
+  else { b.disabled = !$("#input").value.trim() && !S.pending.length; b.title = t("send"); b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'; }
 }
 
 // ---------- conversación ----------
 function systemPrompt() {
   const s = settings(), parts = [];
   if (s.system.trim()) parts.push(s.system.trim());
-  if (s.useMemory && S.memory.trim()) parts.push("## Memoria (datos que el usuario quiere que recuerdes)\n" + S.memory.trim());
+  if (s.useMemory && S.memory.trim()) parts.push(t("mem_header") + "\n" + S.memory.trim());
   return parts.join("\n\n");
 }
 function apiMessages(extra) {
@@ -383,7 +473,7 @@ function apiMessages(extra) {
   for (const m of S.chat.messages) {
     if (m.error || (m.role === "assistant" && !m.content)) continue;
     let c = m.content || "";
-    if (m.files?.length) c = m.files.map((f) => `<archivo nombre="${f.name}">\n${f.text}\n</archivo>`).join("\n\n") + (c ? "\n\n" + c : "");
+    if (m.files?.length) c = m.files.map((f) => `<${t("file_tag")} ${t("file_attr")}="${f.name}">\n${f.text}\n</${t("file_tag")}>`).join("\n\n") + (c ? "\n\n" + c : "");
     out.push({ role: m.role, content: c });
   }
   if (extra) out.push(extra);
@@ -398,18 +488,22 @@ async function send() {
   const fileTok = S.pending.reduce((a, f) => a + f.tokens, 0);
   S.pending = []; $("#input").value = ""; autosize(); renderPending();
   // el M4 lee ~160 tok/s; los turnos siguientes del mismo chat reutilizan lo ya leído
-  const m = { role: "assistant", content: "", thinking: "", status: fileTok > 1500 ? `Leyendo ${fmtK(fileTok)} tokens de archivos (~${Math.ceil(fileTok / 160)} s la primera vez)…` : "Pensando…" };
+  const m = { role: "assistant", content: "", thinking: "", status: fileTok > 1500 ? t("reading_files", { n: fmtK(fileTok), s: Math.ceil(fileTok / 160) }) : t("thinking") };
   c.messages.push(m);
   if (!c.title) $("#title").textContent = text.slice(0, 60) || "Chat";
   renderMsgs(); scrollEnd(true);
-  const live = $("#msgs").lastElementChild;
   S.busy = true; S.ctrl = new AbortController(); updateSend();
   const npred = s.ctx >= 16384 ? 4096 : Math.floor(s.ctx / 4);
   const t0 = performance.now(); let final = null, frame = 0, stopped = false;
-  const paint = () => { frame = 0; const el = msgEl(m, true); live.replaceChildren(...el.childNodes); scrollEnd(); };
+  let live = $("#msgs").lastElementChild;
+  const paint = () => {
+    frame = 0;
+    if (!live.isConnected) live = $("#msgs").lastElementChild;  // se redibujó (cambio de idioma)
+    const el = msgEl(m, true); live.replaceChildren(...el.childNodes); scrollEnd();
+  };
   try {
     const r = await api("/api/chat", { method: "POST", signal: S.ctrl.signal, body: JSON.stringify({
-      model: "qwen3.5-mtp:9b", messages: apiMessages(), stream: true, think: s.think,
+      model: "qwen3.5-mtp:9b", messages: apiMessages(), stream: true, think: s.think, lang: LANG,
       options: { temperature: Number(s.temperature), top_p: s.think ? 0.95 : 0.8, top_k: 20, num_ctx: s.ctx, num_predict: npred } }) });
     const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
     for (;;) {
@@ -441,8 +535,9 @@ async function send() {
     if (!m.thinking) delete m.thinking;
   }
   S.busy = false; S.ctrl = null; updateSend();
-  live.replaceWith(msgEl(m)); renderMeter(); scrollEnd();
-  saveChat().catch((e) => toast("No se pudo guardar el chat: " + e.message));
+  if (live.isConnected) live.replaceWith(msgEl(m)); else renderMsgs();  // p. ej. cambio de idioma a mitad
+  renderMeter(); scrollEnd();
+  saveChat().catch((e) => toast(t("save_failed") + e.message));
 }
 
 // ---------- archivos ----------
@@ -450,10 +545,10 @@ async function addFiles(list) {
   for (const f of list) {
     try {
       const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(f); });
-      toast(`Leyendo ${f.name}…`);
-      const j = await (await api("/ui/api/upload", { method: "POST", body: JSON.stringify({ name: f.name, data: b64 }) })).json();
+      toast(t("reading_file", { name: f.name }));
+      const j = await (await api("/ui/api/upload", { method: "POST", body: JSON.stringify({ name: f.name, data: b64, lang: LANG }) })).json();
       S.pending.push({ name: j.name, text: j.text, tokens: j.tokens, truncated: j.truncated });
-      if (j.tokens > settings().ctx * 0.8) toast(`${f.name} ocupa ${fmtK(j.tokens)} tokens: sube el contexto para que quepa.`);
+      if (j.tokens > settings().ctx * 0.8) toast(t("file_too_big", { name: f.name, n: fmtK(j.tokens) }));
     } catch (e) { toast(e.message); }
   }
   renderPending(); renderMeter();
@@ -463,19 +558,19 @@ async function addFiles(list) {
 async function loadMemory() { S.memory = (await (await api("/ui/api/memory")).json()).text || ""; }
 async function saveMemory(text) { S.memory = text; await api("/ui/api/memory", { method: "PUT", body: JSON.stringify({ text }) }); }
 async function summarizeToMemory() {
-  if (S.busy) return toast("Espera a que termine la respuesta.");
-  if (!S.chat.messages.some((m) => m.role === "assistant" && m.content)) return toast("Todavía no hay nada que resumir en este chat.");
-  S.busy = true; updateSend(); toast("Resumiendo este chat para la memoria…");
+  if (S.busy) return toast(t("wait"));
+  if (!S.chat.messages.some((m) => m.role === "assistant" && m.content)) return toast(t("nothing_to_sum"));
+  S.busy = true; updateSend(); toast(t("summarizing"));
   try {
     const r = await api("/api/chat", { method: "POST", body: JSON.stringify({
-      model: "m", stream: false, think: false, options: { temperature: 0.3, num_ctx: settings().ctx, num_predict: 400 },
-      messages: apiMessages({ role: "user", content: "Resume en 3 a 6 viñetas breves lo importante de esta conversación que convenga recordar en futuras conversaciones: datos sobre mí, decisiones, preferencias y conclusiones. Responde solo con las viñetas." }) }) });
+      model: "m", stream: false, think: false, lang: LANG, options: { temperature: 0.3, num_ctx: settings().ctx, num_predict: 400 },
+      messages: apiMessages({ role: "user", content: t("sum_prompt") }) }) });
     const sum = ((await r.json()).message?.content || "").trim();
-    if (!sum) throw new Error("el resumen salió vacío");
-    const date = new Date().toLocaleDateString("es-ES");
+    if (!sum) throw new Error(t("sum_empty"));
+    const date = new Date().toLocaleDateString(t("locale"));
     await saveMemory((S.memory.trim() ? S.memory.trim() + "\n\n" : "") + `### ${S.chat.title || "Chat"} (${date})\n${sum}`);
-    toast("Resumen guardado en la memoria.");
-  } catch (e) { toast("No se pudo resumir: " + e.message); }
+    toast(t("sum_saved"));
+  } catch (e) { toast(t("sum_failed") + e.message); }
   S.busy = false; updateSend();
 }
 
@@ -498,11 +593,11 @@ $("#usemem").onchange = (e) => setS("useMemory", e.target.checked);
 $("#system").onchange = (e) => setS("system", e.target.value);
 $("#mem-btn").onclick = () => { $("#mem-text").value = S.memory; $("#memory").classList.add("on"); $("#mem-text").focus(); };
 $("#mem-cancel").onclick = () => $("#memory").classList.remove("on");
-$("#mem-save").onclick = async () => { await saveMemory($("#mem-text").value); $("#memory").classList.remove("on"); toast("Memoria guardada."); };
+$("#mem-save").onclick = async () => { await saveMemory($("#mem-text").value); $("#memory").classList.remove("on"); toast(t("mem_saved")); };
 $("#off-btn").onclick = async () => {
-  if (!confirm("¿Apagar el modelo? Libera la memoria del Mac. Para volver a usarlo, abre «Chat Qwen».")) return;
+  if (!confirm(t("confirm_off"))) return;
   try { await api("/ui/api/shutdown", { method: "POST", body: "{}" }); } catch {}
-  down("Modelo apagado. Ábrelo otra vez con «Chat Qwen» cuando lo necesites.");
+  down(t("off_banner"));
 };
 $("#msgs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -510,7 +605,7 @@ $("#msgs").addEventListener("click", (e) => {
   if (b.classList.contains("copy")) text = b.parentElement.querySelector("code").textContent;
   else if (b.classList.contains("copymsg")) text = S.chat.messages[+b.closest(".msg").dataset.i]?.content || "";
   else return;
-  navigator.clipboard.writeText(text).then(() => { b.textContent = "Copiado"; setTimeout(() => (b.textContent = "Copiar"), 1200); });
+  navigator.clipboard.writeText(text).then(() => { b.textContent = t("copied"); setTimeout(() => (b.textContent = t("copy")), 1200); });
 });
 let dragN = 0;
 addEventListener("dragenter", (e) => { if (e.dataTransfer?.types.includes("Files")) { dragN++; $("#drop").classList.add("on"); } });
@@ -518,7 +613,10 @@ addEventListener("dragleave", () => { if (--dragN <= 0) { dragN = 0; $("#drop").
 addEventListener("dragover", (e) => e.preventDefault());
 addEventListener("drop", (e) => { e.preventDefault(); dragN = 0; $("#drop").classList.remove("on"); if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]); });
 
+document.querySelectorAll(".lang button").forEach((b) => (b.onclick = () => setLang(b.dataset.lang)));
+
 (async () => {
+  applyLang();
   S.chat = blankChat(); renderAll();
   try { await Promise.all([loadChats(), loadMemory()]); } catch {}
   $("#input").focus();

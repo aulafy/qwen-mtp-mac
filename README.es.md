@@ -82,7 +82,8 @@ lento), unos 9 GB de RAM libres y ~10 GB de disco.
 
 ### Chat
 
-`./chat.sh` (o `Chat Qwen.app`) abre `http://127.0.0.1:11435/chat`:
+`./chat.sh` (o `Chat Qwen.app`) abre `http://127.0.0.1:11435/chat`, en español o en inglés (selector ES/EN abajo
+en la barra lateral; empieza en el idioma del navegador y recuerda tu elección):
 
 - **Contexto**: elige de 4K a 64K tokens. Un medidor muestra lo usado; si se llena, se olvidan los mensajes
   más antiguos y la respuesta lo indica.
@@ -174,7 +175,7 @@ por separado el coste de las capas GatedDeltaNet.
 - Una conversación a la vez. Sin llamadas a herramientas, imágenes ni penalizaciones de repetición.
 - Con `top_k = 0`, el muestreo se limita a los 256 mejores candidatos.
 - Versiones fijadas (`mlx==0.31.2`, `mlx-lm==0.31.3`), porque se sustituyen métodos internos de mlx-lm.
-- Comentarios del código e interfaz del chat en español.
+- Comentarios del código en español.
 
 ## Créditos y licencia
 

@@ -81,7 +81,8 @@ You need an Apple Silicon Mac (tested on an M4; M1/M2 lack native bf16 on the GP
 
 ### Chat
 
-`./chat.sh` (or `Chat Qwen.app`) opens `http://127.0.0.1:11435/chat` (UI in Spanish):
+`./chat.sh` (or `Chat Qwen.app`) opens `http://127.0.0.1:11435/chat`, in English or Spanish (ES/EN switch at
+the bottom of the sidebar; it starts in your browser's language and remembers your choice):
 
 - **Context**: choose 4K–64K tokens. A meter shows usage; when it fills up, the oldest messages are dropped
   and the answer says so.
@@ -91,7 +92,7 @@ You need an Apple Silicon Mac (tested on an M4; M1/M2 lack native bf16 on the GP
 - **Files**: text, code, CSV, JSON, text PDFs and DOCX. The first read runs at ~160 tokens/s (a 12K-token
   file takes ~75 s); follow-up questions in the same chat do not read it again.
 - **Per chat**: custom instructions, temperature, "reasoning" and memory on/off.
-- **RAM**: the model unloads after 30 idle minutes (`QWEN_MTP_IDLE`) or with the "Apagar modelo" button.
+- **RAM**: the model unloads after 30 idle minutes (`QWEN_MTP_IDLE`) or with the "Shut down model" button.
 
 ### From other apps (Ollama and OpenAI APIs)
 
@@ -173,7 +174,7 @@ their own.
 - With `top_k = 0`, sampling is restricted to the 256 best candidates.
 - Versions are pinned (`mlx==0.31.2`, `mlx-lm==0.31.3`) because the project replaces internal methods of
   mlx-lm.
-- Code comments and the chat UI are in Spanish.
+- Code comments are in Spanish.
 
 ## Credits and license
 
